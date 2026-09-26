@@ -520,7 +520,7 @@ function updateUpdateBadge(info) {
 /** 「跳过此次更新」记在 localStorage 的键（值 = 跳过的版本号） */
 const UPDATE_SKIP_KEY = 'workbuddy-desktop-update-skip';
 /** 本会话内已弹过提示的版本号：用户选「取消」后，同一版本不再连着弹
- *  （后端的定时检查每 5 分钟就会再次发现它，弹一次/轮是预期节奏） */
+ *  （后端的定时检查到点会再次发现它，弹一次/轮是预期节奏） */
 let promptedUpdateVersion = '';
 
 function closeUpdateModal() {
@@ -769,14 +769,11 @@ window.wbApp = {
   updateUpdateBadge,
 };
 
-// ─── 启动自动维护：主进程会拉一次临期 token 刷新 ───
-// 余额不在这里：它归「定时查询积分」那条定时任务（首轮在网关就绪后立刻跑一次，
-// 见 commands.rs 的 startup_maintenance），界面由下面的轮询读快照应用。
-api.onAutoMaintained?.(({ refreshed }) => {
-  const count = Array.isArray(refreshed) ? refreshed.length : 0;
-  if (count) window.wbAccountsView?.render();
-  if (count) toast(`已自动刷新 ${count} 个临期账号的 Token`);
-});
+// ─── 账号的自动维护结果 ───────────────────────
+// 启动时不再由主进程额外拉一次临期凭证：凭证维护是「定时任务」页里的一条后端
+// 任务，排期（含失败冷却）持久化，重启只补跑已经到期的那一轮 —— 见
+// `core::scheduled_tasks`。维护完成后账号页按 20 秒主状态轮询自然跟上，
+// 因此这里不再订阅 `accounts:auto-maintained`（那条事件随启动维护一并删除）。
 
 // ─── 初始化 ───────────────────────────────────
 
@@ -823,18 +820,24 @@ refresh();
 void window.wbPortPanel?.sync?.();
 
 /**
- * 启动即自动检查一次更新：有新版本时在「设置」导航项上给提示。
+ * 启动即把更新状态铺一次：读**后端缓存**里的最近一次检查结果（定时任务按间隔
+ * 查一次并落库，默认 20 分钟），有新版本时在「设置」导航项上给提示。
+ *
+ * 这里**不自己打 GitHub**：dev 模式热重载一天要重载几十次，每次加载都
+ * 查一遍会把匿名限额（60 次/小时，按出口 IP 计）耗光 —— 见底之后连定时任务
+ * 也跟着失败，而本该做的只是等下一个检查窗口。要立刻查有设置页的「检查更新」
+ * 按钮。
  *
  * 放在 DOMContentLoaded 里而不是直接调用：app.js 在 index.html 里排得比
  * update-panel.js 靠前，脚本执行到这里时 window.wbUpdatePanel 还没挂上，
  * 直接调会静默什么都不做；DOMContentLoaded 在所有同步脚本执行完之后触发，
- * 那时面板已经就位。不 await（void 触发）—— 这是网络请求，首屏不该等它；
- * 失败静默（面板里留一条失败记录，导航提示不显示）。
+ * 那时面板已经就位。不 await（void 触发）—— 首屏不该等它；失败静默
+ * （面板按「未检查」显示，导航提示不亮）。
  *
- * 面板的 load() 只读下载进度、不查版本，所以这里这一下不会和它重复请求。
+ * 面板的 load() 同样只读缓存，所以这里这一下不会和它重复请求。
  */
 document.addEventListener('DOMContentLoaded', () => {
-  void window.wbUpdatePanel?.check?.();
+  void window.wbUpdatePanel?.syncFromCache?.();
   // 数据结构升级：这次更新把数据存储换成了单个 SQLite 库，启动时后端只探测
   // 「还有没有旧文件没搬进库」，有待迁移就直接导入（**不弹窗** —— 升级没有
   // 选项也不能取消，弹窗只是多余的一道坎）。同样放 DOMContentLoaded：
@@ -862,18 +865,35 @@ setInterval(() => {
   void window.wbAccountsView?.syncBalancesSnapshot?.();
 }, 20_000);
 
-// 定时「软件版本检查」的结果轮询（1 分钟）。
+// 「软件版本检查」结果的轮询：读**后端缓存**，不自己打 GitHub。
 //
-// 真正的检查在**后端定时任务**里跑（定时任务页的「软件版本检查」，默认 5 分钟
-// 一次，结果缓存于 UpdateManager）；这里只是低频读一次缓存来亮/灭侧栏徽标，
-// 不自己打 GitHub —— 匿名限额 60 次/小时，双端各查一遍就贴顶了。
-// hasUpdate 为 null（无法比较）或 false 时 syncUpdateBadge 自会不亮标；
-// 读到 checked:false（本进程还没查过）不覆盖 lastUpdateInfo ——
-// 启动那次壳命令检查的结果仍是最准的一份。
-setInterval(() => {
-  if (document.hidden) return;
+// 真正的检查在后端定时任务里跑（定时任务页的「软件版本检查」，默认每 20 分钟一次，
+// 排期与结果都持久化在库里）；这里只是读一次缓存来亮/灭侧栏徽标与弹更新弹窗 ——
+// 匿名限额 60 次/小时且**按出口 IP 计**，前端再自己查一遍就是白白多花一份额度。
+//
+// ── 为什么是自适应节奏而不是固定 1 分钟 ──────────────────────
+// 首屏可能正好落在「后端刚起、定时任务那一轮还在跑」的窗口里：这时缓存还没有
+// 结果（checked:false），固定 1 分钟会让用户盯着「未检查」等满一分钟 —— 而改造
+// 前前端自己查，结果是立刻出来的。所以没有结果时加密到 5 秒一次，拿到结果
+// （或等满 2 分钟仍没有，例如用户关掉了这条任务）就回到常态的 1 分钟。
+// 用 setTimeout 自排期而不是 setInterval：节奏要变，固定间隔做不到。
+let updatePollDelay = 5_000;
+const updatePollStartedAt = Date.now();
+
+function pollUpdateStatus() {
+  const settle = () => { setTimeout(pollUpdateStatus, updatePollDelay); };
+  if (document.hidden) { settle(); return; }
   void api.getUpdateStatus?.().then(info => {
-    if (!info || info.checked === false) return;
-    wbApp.updateUpdateBadge(info);
-  }).catch(() => { /* 静默：下一次轮询自然重试 */ });
-}, 60_000);
+    if (info && info.checked !== false) {
+      // 有结果了（含「已是最新」）：回到常态节奏，徽标/弹窗由同一出口处理
+      updatePollDelay = 60_000;
+      wbApp.updateUpdateBadge(info);
+      return;
+    }
+    if (Date.now() - updatePollStartedAt > 120_000) updatePollDelay = 60_000;
+  }).catch(() => {
+    // 静默：下一次轮询自然重试
+  }).finally(settle);
+}
+
+setTimeout(pollUpdateStatus, updatePollDelay);

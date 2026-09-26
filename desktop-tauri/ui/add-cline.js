@@ -41,37 +41,32 @@
         //
         // 设备授权与池无关（只有 api.cline.bot 一台站点、一套协议），
         // 登录只决定落哪一家的账号 —— 所以两家这段文案只有落点不同。
-        noteHtml: '打开 Cline 授权页并完成确认，网关会自动取回凭证并加入账号列表。'
-          + `登录成功的账号会归入 <b>${label}</b>${poolNote}`,
+        noteHtml: '打开授权页完成确认，账号自动加入 <b>' + label + '</b>' + poolNote,
         button: '打开 Cline 授权页',
         busyText: '等待 Cline 授权确认…',
         modes: [
           {
             value: 'embedded',
             label: '内嵌窗口（推荐）',
-            hint: '将打开 Cline 授权页，确认后自动加入账号列表。关掉窗口即取消等待',
+            hint: '内嵌窗口打开；完成后自动加入列表，关窗即取消等待',
           },
           {
             value: 'external',
             label: '系统浏览器',
-            hint: '将用系统默认浏览器打开授权页（会复用浏览器里已登录的 Cline 账号）；确认后自动加入列表。关掉弹窗即取消等待',
+            hint: '系统浏览器打开（复用已登录的 Cline 账号）；完成后自动加入列表',
           },
         ],
       },
       manualTitle: '填写凭证',
-      manualNote: 'accessToken 是 Cline 的登录凭证（形如 workos:eyJ…，可只填这一段）；'
-        + 'refreshToken 可选，填了之后到期能自动续期。两者都可以从 Cline 的登录态文件里取到'
-        + '（~/.cline/data/settings/providers.json 的 providers.cline.settings.auth）。'
-        + `同一个 Cline 账号两个额度池都能用，这里添加的账号归入 ${label}。`,
+      manualNote: 'refreshToken 可选，填了可自动续期；两者都能从客户端登录态文件取到。'
+        + `同一个 Cline 账号两个池都能用，这里归入 ${label}。`,
       fields: [
         { key: 'accessToken', label: 'accessToken', rows: 3, placeholder: '粘贴 workos:… 开头的令牌（不带前缀也会自动补上）' },
         { key: 'refreshToken', label: 'refreshToken', rows: 2, optional: true, placeholder: '可选，没有则无法自动续期' },
         { key: 'name', label: '备注名', optional: true, placeholder: '可选，留空使用账号姓名、邮箱或令牌指纹' },
       ],
-      desktopNote: '读本机 Cline 客户端当前的登录态建一个「桌面端实时登录态」账号：'
-        + '凭证不落账号文件、每次实时读取（删掉这条记录不影响 Cline 客户端登录态）。'
-        + '客户端重新登录后网关立刻跟上，不需要手动同步。'
-        + `桌面登录态两个额度池都能建，这一条归入 ${label}。`,
+      desktopNote: '读本机客户端当前登录态，每次实时读取（删掉这条记录不影响客户端登录态）。'
+        + `这一条归入 ${label}。`,
       desktopHint: '读取 ~/.cline/data/settings/providers.json，需已在 Cline 客户端登录',
     };
   }

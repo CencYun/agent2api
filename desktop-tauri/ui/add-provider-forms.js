@@ -20,8 +20,23 @@
   /** 第 1 步（选提供商）与第 2 步（选方式 + 填凭证）的容器 */
   const ADD_STEP_PICK_ID = 'add-step-pick';
   const ADD_STEP_FORM_ID = 'add-step-form';
-  const ADD_STEP_BACK_ID = 'add-step-back';
-  /** 底部操作条：主按钮与失败提示的落点，由需要它的块在 mount 时把自己的按钮搬进来 */
+  /**
+   * 第 2 步的弹窗：叠在列表弹窗之上的一层。
+   *
+   * 点卡片「弹出」表单，关掉它回到列表 —— 改造前第 2 步是把列表弹窗的内容
+   * 整体换掉（标题变了、头部多个返回箭头），读起来像跳进了一个二级页面。
+   * 结构与 #add-modal 一致（.modal-mask > .modal），层级高一档。
+   */
+  const ADD_FORM_MODAL_ID = 'add-form-modal';
+  const ADD_FORM_TITLE_ID = 'add-form-title';
+  const ADD_FORM_CLOSE_ID = 'add-form-close';
+  const ADD_FORM_BODY_ID = 'add-form-body';
+  /** 表单弹窗的底部操作条：第 2 步的主按钮与失败提示落在这里 */
+  const ADD_FORM_FOOT_ID = 'add-form-foot';
+  const ADD_FORM_FOOT_ACTIONS_ID = 'add-form-foot-actions';
+  const ADD_FORM_FOOT_HINT_ID = 'add-form-foot-hint';
+  /** 列表弹窗的底部操作条：给「留在第 1 步完成」的主按钮（导入段的「导入所选」）——
+   *  两条各归各的层级，第 2 步的按钮不会跑到列表弹窗上、反之亦然 */
   const ADD_FOOT_ID = 'add-foot';
   const ADD_FOOT_ACTIONS_ID = 'add-foot-actions';
   const ADD_FOOT_HINT_ID = 'add-foot-hint';
@@ -148,19 +163,19 @@
       // 才回得来（那是小浣熊官方客户端装的，装了才有），给了这个选项只会让
       // 用户选完永远等不到回调。理由详见 src-tauri/src/login.rs 的模块头。
       webLogin: {
-        noteHtml: '打开小浣熊官方登录页，在<strong>内嵌窗口</strong>里完成登录：登录成功后官方页面会回调本机，网关自动用一次性授权码换取凭证并加入账号列表（授权码只在本机传给网关，界面不显示明文 token）。',
+        noteHtml: '在<strong>内嵌窗口</strong>里完成官方登录，成功后自动加入账号列表。',
         button: '打开网页登录',
-        hint: '将打开内嵌窗口；登录完成后自动加入账号列表。关掉窗口即取消等待',
+        hint: '内嵌窗口打开；完成后自动加入列表，关窗即取消等待',
         busyText: '等待小浣熊登录完成…',
       },
       manualTitle: '粘贴 token / refreshToken',
-      manualNoteHtml: 'token 是小浣熊的登录凭证（JWT）。refreshToken 可选，填了之后到期可自动续期；两者都可从<a href="#" class="raccoon-hint-link" data-raccoon-hint>小浣熊客户端登录态文件</a>里取到。',
+      manualNoteHtml: 'refreshToken 可选，填了到期可自动续期；两者都能从<a href="#" class="raccoon-hint-link" data-raccoon-hint>小浣熊客户端登录态文件</a>里取到。',
       fields: [
         { key: 'name', label: '备注名', optional: true, placeholder: '可选，留空则用凭证里的账号名' },
         { key: 'token', label: 'token', rows: 3, placeholder: '粘贴 access_token（一长串 JWT）' },
         { key: 'refreshToken', inputKey: 'refresh', label: 'refreshToken', rows: 2, optional: true, placeholder: '可选' },
       ],
-      desktopNote: '读本机小浣熊客户端当前的登录态建一个「桌面端实时登录态」账号：凭证不落账号文件、每次实时读取（删掉这条记录不影响客户端登录态）。客户端重新登录后，点「刷新 Token」即可同步。',
+      desktopNote: '读本机客户端当前登录态，每次实时读取（删掉这条记录不影响客户端登录态）。客户端重新登录后点「刷新 Token」同步。',
     },
     {
       // catpaw_accounts::add_catpaw_account：token / accessToken / access_token / auth_token
@@ -177,30 +192,29 @@
       // 就完全走得通 —— 而且它是内嵌窗口走不通时的兜底：美团 passport 的
       // 扫码登录 / 第三方账号登录在部分环境下会拒绝内嵌窗口。
       webLogin: {
-        noteHtml: '打开 CatPaw 官方登录页（美团 passport），用你的 CatPaw 账号完成登录：'
-          + '登录成功后官方页面会把登录凭证回调到本机网关，自动加入账号列表（界面不显示明文 token）。',
+        noteHtml: '用 CatPaw 账号完成登录（美团 passport），成功后自动加入账号列表。',
         button: '打开 CatPaw 网页登录',
         busyText: '等待 CatPaw 登录完成…',
         modes: [
           {
             value: 'embedded',
             label: '内嵌窗口（推荐）',
-            hint: '将打开内嵌窗口；登录完成后自动加入账号列表。关掉窗口即取消等待',
+            hint: '内嵌窗口打开；完成后自动加入列表，关窗即取消等待',
           },
           {
             value: 'external',
             label: '系统浏览器',
-            hint: '将用系统默认浏览器打开登录页（会复用浏览器里已登录的美团账号）；完成登录后自动加入账号列表，关掉弹窗即取消等待',
+            hint: '系统浏览器打开（复用已登录的美团账号）；完成后自动加入列表',
           },
         ],
       },
-      manualNote: 'token 是 CatPaw 的 X-Passport-Token（登录态 Cookie），uid 为必填的账号标识。CatPaw 没有刷新机制，token 过期后需在客户端重新登录。',
+      manualNote: 'token 是登录态 Cookie；CatPaw 没有刷新机制，过期后需在客户端重新登录。',
       fields: [
         { key: 'token', label: 'token', rows: 3, placeholder: 'CatPaw 的 X-Passport-Token（登录态 Cookie）' },
         { key: 'uid', label: 'uid', placeholder: '必填，CatPaw 账号标识' },
         { key: 'name', label: '备注名', optional: true, placeholder: '可选，留空则用登录名或 uid' },
       ],
-      desktopNote: '读本机 CatPaw 客户端当前的登录态建一个「桌面端实时登录态」账号：凭证不落账号文件、每次实时读取（删掉这条记录不影响客户端登录态）。客户端重新登录后重新导入即可同步。',
+      desktopNote: '读本机客户端当前登录态，每次实时读取（删掉这条记录不影响客户端登录态）。客户端重新登录后重新导入即可。',
       desktopHint: '读取 ~/.meituan-catpaw/auth.json，需已在 CatPaw 客户端登录',
     },
     {
@@ -222,13 +236,11 @@
       //      理由见下面国际版那一项）。
       provider: 'autoclaw',
       label: 'AutoClaw 国内版',
-      manualNote: 'token 可填明文 JWT；token / refreshToken 字符串支持 enc: 前缀，后端在 Windows 上使用本机密钥解密。未填写 refreshToken 无法自动续期；deviceId 可选。',
+      manualNote: 'token 支持 enc: 前缀（Windows 上自动解密）。未填 refreshToken 无法自动续期。',
       // 手机验证码登录：国内版**唯一**的官方登录方式（它的登录页不渲染
       // OAuth 按钮 —— 已核对构建产物）。理由详见 login.rs 的模块头。
       smsLogin: {
-        noteHtml: '用 AutoClaw 绑定的手机号登录：点「获取验证码」，收到短信后填入并登录。'
-          + '这是 AutoClaw 国内版官方唯一的登录方式（它没有网页授权登录），'
-          + '验证码由本机直接提交给官方接口，界面不显示 token。',
+        noteHtml: '用绑定的手机号登录：点「获取验证码」后填入即可。这是国内版官方唯一的登录方式。',
       },
       fields: [
         { key: 'token', label: 'token', rows: 3, placeholder: '明文 JWT 或 auth.json 里的 enc: 加密值（自动解密）' },
@@ -236,7 +248,7 @@
         { key: 'deviceId', label: 'deviceId', optional: true, placeholder: '可选，续期时带上' },
         { key: 'name', label: '备注名', optional: true, placeholder: '可选，留空则用 userId' },
       ],
-      desktopNote: '读本机 AutoClaw 客户端当前的登录态（%APPDATA%/AutoClaw/auth.json，DPAPI + AES-GCM 解密）建一个「桌面端实时登录态」账号：凭证不落账号文件、每次实时读取（删掉这条记录不影响客户端登录态）。',
+      desktopNote: '读本机客户端当前登录态，每次实时读取（删掉这条记录不影响客户端登录态）。',
       desktopHint: '读取 %APPDATA%/AutoClaw/auth.json 并解密，仅 Windows',
       // 这一家的登录态是 Electron safeStorage 密文，解密要走 DPAPI（仅 Windows），
       // 因此 macOS 上整段收起（理由见 desktopImportAvailable）
@@ -247,7 +259,7 @@
       // 同一套签名指纹（appId/appKey 两地逐字相同，已实测），只有站点不同。
       provider: 'autoclaw-intl',
       label: 'AutoClaw 国际版',
-      manualNote: 'token 可填明文 JWT。未填写 refreshToken 无法自动续期；deviceId 可选。国际版与国内版是两套独立的账号体系，请填国际版账号的凭证。若你是用 Zai / Google 账号登录国际版客户端的，可直接用上方「网页登录」或下方「导入桌面端登录态」。',
+      manualNote: '国际版与国内版账号体系独立，请填国际版的凭证。未填 refreshToken 无法自动续期。',
       // ── OAuth 网页登录：国际版**唯一**的登录方式 ──────────────
       // 这一家的登录页只渲染 Zai / Google 两个按钮（手机验证码表单被死代码
       // 消除，已核对构建产物），因此这里把它放在**第一位** —— 用户最该先看到
@@ -260,11 +272,8 @@
       // 「打开方式」这一级与另外四家同款（见 `modes`）。
       oauthLogin: {
         title: '网页登录（Zai / Google）',
-        noteHtml: '用你的 Zai 或 Google 账号登录 AutoClaw <strong>国际版</strong>：'
-          + '点下方按钮后先完成一次滑块验证（官方要求的风控步骤），'
-          + '随后会打开官方登录页，登录完成即自动添加账号。'
-          + '<br>这是国际版官方唯一的登录方式；若你已在客户端登录过，'
-          + '用「导入桌面端登录态」更快。',
+        noteHtml: '点按钮后先过一次滑块验证（官方风控），随后打开登录页，登录完成即自动添加账号。'
+          + '<br>这是国际版官方唯一的登录方式；已在客户端登录过的，用「导入桌面端登录态」更快。',
         // ── 两种打开方式（与 CatPaw / Qoder / Cline 同一级）──────
         // 回调落在 z.ai 给官方客户端登记的那四个 loopback 端口上（网关登录时
         // 临时占一个、再转回自己的回调路由，见后端
@@ -279,14 +288,12 @@
           {
             value: 'embedded',
             label: '内嵌窗口（推荐）',
-            hint: '将打开内嵌窗口完成官方登录，登录完成后自动加入账号列表。'
-              + '关掉窗口即取消等待（Google 账号若在此被拒，改用「系统浏览器」）',
+            hint: '内嵌窗口打开；关窗即取消等待（Google 账号被拒时改用系统浏览器）',
           },
           {
             value: 'external',
             label: '系统浏览器',
-            hint: '将用系统默认浏览器打开官方登录页（会复用浏览器里已登录的 '
-              + 'Zai / Google 账号）；完成登录后自动加入账号列表，关掉弹窗即取消等待',
+            hint: '系统浏览器打开（复用已登录的 Zai / Google 账号）；完成后自动加入列表',
           },
         ],
       },
@@ -311,7 +318,7 @@
       //
       // OAuth 现已接上（上方那一项），导入不再是唯一入口 —— 但它照旧两个地区
       // 都给：它不需要过一次验证码，是一条独立可用的路径。
-      desktopNote: '读本机 AutoClaw 客户端当前的登录态（%APPDATA%/AutoClaw/auth.json，DPAPI + AES-GCM 解密）建一个「桌面端实时登录态」账号：凭证不落账号文件、每次实时读取（删掉这条记录不影响客户端登录态）。用 Zai / Google 账号登录国际版客户端的用户走这一条。',
+      desktopNote: '读本机客户端当前登录态，每次实时读取（删掉这条记录不影响客户端登录态）。用 Zai / Google 登录客户端的用户走这一条。',
       desktopHint: '读取 %APPDATA%/AutoClaw/auth.json 并解密，仅 Windows',
       desktopWindowsOnly: true,
     },
@@ -469,18 +476,17 @@
 
   /**
    * 注入添加账号弹窗的两步结构：
-   *   第 1 步（#add-step-pick）—— 提供商卡片列表 + 搜索；
-   *   第 2 步（#add-step-form）—— 各家的表单块。
+   *   第 1 步（#add-step-pick）—— 提供商卡片列表 + 搜索，住在列表弹窗（#add-modal）里；
+   *   第 2 步（#add-step-form）—— 各家的表单块，住在表单弹窗（#add-form-modal）里。
    *
    * 为什么拆两步：改造前是一屏里两层横向分段（上面 9 项选家、下面最多 5 项选方式），
    * 小窗口下换行、找不到入口，且「刚才选的是哪家」在长弹窗里滚两屏就看不见了。
    * 拆开后每一步只回答一个问题。
    *
-   * 返回键与主操作分别落在头部与底部，都不占步骤容器：
-   *   · 返回键做成 .modal-head 里的一枚图标钮（与右侧关闭键对称），标题自己带着
-   *     「给哪家加账号」，原来那条「‹ 上一步　已选：xxx」独占一行、信息还和标题重复；
-   *   · 底部操作条（.modal-foot）默认收起，谁把自己的主按钮搬进来谁点亮它 ——
-   *     内置家的按钮仍在各自段落里，不受影响。
+   * 为什么第 2 步另起一个弹窗：原先两步同住一个 .modal，切第 2 步 = 把内容整体
+   * 换掉 + 头部多一个返回箭头，读起来像「跳进了二级页面」。现在点卡片是弹出一层
+   * 新弹窗（自带遮罩与弹出动画），关掉它就是回到刚才那份列表 —— 「返回」由关闭键
+   * 表达，不再需要用箭头去解释层级。
    *
    * 为什么要挪动既有节点：WorkBuddy 的账号版本 / 网页登录两个 section 写在
    * index.html 里（交互在 add-account.js），它们必须作为一个整体随「哪一家」显隐。
@@ -499,6 +505,10 @@
     pick.id = ADD_STEP_PICK_ID;
     pick.innerHTML = `<div class="modal-section">`
       + `<h3>选择提供商</h3>`
+      // 分段与搜索同一行：左边选「给什么形态的上游加账号」，右边是这一屏的过滤器。
+      // 原先分段下面那行文案（每种类型各一句）已经去掉 —— 三段的名字自己就说清了，
+      // 说明只在第一次进来时有用、之后每开一次弹窗都占一行。
+      + `<div class="add-pick-row">`
       + `<div class="seg add-seg" id="${ADD_TYPE_SEG_ID}" role="radiogroup"`
       + ` aria-label="账号类型">`
       + `<button type="button" class="seg-item active" data-value="${TYPE_PROXY}"`
@@ -508,46 +518,59 @@
       + `<button type="button" class="seg-item" data-value="${TYPE_CUSTOM}"`
       + ` role="radio" aria-checked="false" tabindex="-1">自定义</button>`
       // 「导入」分段暂时收起（见 IMPORT_SEGMENT_ENABLED）：整段不生成，
-      // 后面的 syncTypeHint / syncAddStepSections 里对应分支照旧留着
+      // 后面的 syncAddStepSections 里对应分支照旧留着
       + (IMPORT_SEGMENT_ENABLED
         ? `<button type="button" class="seg-item" data-value="${TYPE_IMPORT}"`
           + ` role="radio" aria-checked="false" tabindex="-1">导入</button>`
         : '')
       + `</div>`
-      + `<p class="add-type-hint" id="add-type-hint">把本机客户端的登录态包装成账号，或用官方授权页登录。</p>`
       + `<span class="input-affix add-provider-search" id="add-search-wrap">`
       + `<span class="affix">⌕</span>`
       + `<input type="search" id="${ADD_SEARCH_ID}" placeholder="搜索提供商…" autocomplete="off">`
       + `</span>`
+      + `</div>`
       + `<div class="add-provider-grid" id="${ADD_PROVIDER_GRID_ID}" role="listbox"`
       + ` aria-label="选择要添加账号的提供商"></div>`
       + `</div>`;
     body.insertBefore(pick, body.firstChild);
 
-    // ② 第 2 步：各家的块（返回键在头部、主操作在底部，这里只放块本身）
+    // ② 第 2 步的弹窗（层叠在列表弹窗之上）：点卡片弹出来，关掉它回到列表。
+    //    各家的块仍然挂在 #add-step-form 里（互斥显隐那套不变），只是换了宿主。
+    const formModal = document.createElement('div');
+    formModal.id = ADD_FORM_MODAL_ID;
+    formModal.className = 'modal-mask';
+    formModal.setAttribute('role', 'dialog');
+    formModal.setAttribute('aria-modal', 'true');
+    formModal.setAttribute('aria-labelledby', ADD_FORM_TITLE_ID);
+    formModal.innerHTML = `<div class="modal">`
+      + `<div class="modal-head">`
+      + `<h2 id="${ADD_FORM_TITLE_ID}">添加账号</h2>`
+      + `<button type="button" id="${ADD_FORM_CLOSE_ID}" title="关闭">✕</button>`
+      + `</div>`
+      + `<div class="modal-body" id="${ADD_FORM_BODY_ID}"></div>`
+      + `<div class="modal-foot" id="${ADD_FORM_FOOT_ID}" hidden>`
+      + `<span class="add-foot-hint" id="${ADD_FORM_FOOT_HINT_ID}"></span>`
+      + `<span class="add-foot-actions" id="${ADD_FORM_FOOT_ACTIONS_ID}"></span>`
+      + `</div>`
+      + `</div>`;
+    // 位置：紧跟在列表弹窗后面（同级 .modal-mask 里 DOM 在后者居上，CSS 另有显式层级）
+    const listModal = $('add-modal');
+    listModal?.parentElement?.insertBefore(formModal, listModal.nextSibling);
+
     const form = document.createElement('div');
     form.className = 'add-step';
     form.id = ADD_STEP_FORM_ID;
     form.hidden = true;
-    body.appendChild(form);
+    formModal.querySelector(`#${ADD_FORM_BODY_ID}`)?.appendChild(form);
 
-    // ③ 返回键：插在标题前面，只在第 2 步显示（第 1 步没有上一级）
-    const head = $('add-modal')?.querySelector('.modal-head');
-    const headTitle = $('add-title');
-    if (head && headTitle && !$(ADD_STEP_BACK_ID)) {
-      const back = document.createElement('button');
-      back.type = 'button';
-      back.id = ADD_STEP_BACK_ID;
-      back.className = 'add-back';
-      back.title = '返回选择提供商';
-      back.setAttribute('aria-label', '返回选择提供商');
-      back.textContent = '‹';
-      back.hidden = true;
-      head.insertBefore(back, headTitle);
-      back.addEventListener('click', () => showAddStep('pick'));
-    }
+    // 关闭 = 回到列表，不销毁表单内容（下次点同一家还是刚才填的状态）
+    $(ADD_FORM_CLOSE_ID)?.addEventListener('click', () => showAddStep('pick'));
+    formModal.addEventListener('click', event => {
+      if (event.target === formModal) showAddStep('pick');
+    });
 
-    // ④ 底部操作条：主操作从字段流里拿出来，失败提示也有了固定位置
+    // ③ 列表弹窗的底部操作条：留给「留在第 1 步完成」的主按钮 —— 眼下是导入段的
+    //    「导入所选」。第 2 步的主按钮走上面那条（#add-form-foot）。
     const modal = $('add-modal')?.querySelector('.modal');
     if (modal && !$(ADD_FOOT_ID)) {
       const foot = document.createElement('div');
@@ -570,16 +593,16 @@
       });
     }
 
-    // ⑤ 把既有区块（除刚插入的两个步骤容器）整体收进 WorkBuddy 容器
+    // ④ 把既有区块（除刚插入的第 1 步容器）整体收进 WorkBuddy 容器（第 2 步的内容）
     const workbuddy = document.createElement('div');
     workbuddy.id = ADD_WB_BLOCK_ID;
     workbuddy.className = 'add-provider-block';
     [...body.children].forEach(node => {
-      if (node !== pick && node !== form) workbuddy.appendChild(node);
+      if (node !== pick) workbuddy.appendChild(node);
     });
     form.appendChild(workbuddy);
 
-    // ⑥ 各家的表单块（同一套构造，见 ADD_FORMS）
+    // ⑤ 各家的表单块（同一套构造，见 ADD_FORMS）
     for (const config of ADD_FORMS) {
       const block = document.createElement('div');
       block.id = ADD_FORM_PROVIDERS[config.provider];
@@ -589,7 +612,7 @@
       form.appendChild(block);
     }
 
-    // ⑦ 其它 provider 的占位块（摘要里出现但后端还没有添加入口）
+    // ⑥ 其它 provider 的占位块（摘要里出现但后端还没有添加入口）
     const placeholder = document.createElement('div');
     placeholder.id = ADD_PLACEHOLDER_ID;
     placeholder.className = 'add-provider-block';
@@ -605,7 +628,6 @@
     $(ADD_TYPE_SEG_ID)?.addEventListener(SEG_EVENT, () => {
       // 先把选中值落进 addAccountType（后面每一步都读它）
       addAccountType = typeValueOf(segValueOf($(ADD_TYPE_SEG_ID)));
-      syncTypeHint();
       syncAddStepSections();
       renderProviderCards();
       // 导入段：面板显隐与惰性扫描在 setSegment 里，底部按钮点亮在 setActive 里
@@ -1013,13 +1035,15 @@
       + `</button>`;
   }
 
-  /** 「新建自定义提供商」卡：落在后注册的自定义块上，由那个块切到「新建」模式 */
+  /** 「新建自定义提供商」卡：落在后注册的自定义块上，由那个块切到「新建」模式。
+   *  说明文案短到一行（与其它卡片同宽）：卡片现在只占网格的一格，长说明会被
+   *  ellipsis 截断，「OpenAI / Anthropic 兼容」这层约束留给表单页去讲。 */
   function newCardHtml() {
     return `<button type="button" class="add-provider-card is-new" data-provider="${NEW_PROVIDER_CARD_ID}" role="option">`
       + `<span class="add-provider-logo is-new">＋</span>`
       + `<span class="add-provider-info">`
       + `<span class="add-provider-name">新建自定义提供商</span>`
-      + `<span class="add-provider-meta">接入一个 OpenAI / Anthropic 兼容的上游</span>`
+      + `<span class="add-provider-meta">接入一个兼容上游</span>`
       + `</span>`
       + `<span class="add-provider-go">›</span>`
       + `</button>`;
@@ -1030,7 +1054,7 @@
    * 但**不做重排指纹**：卡片上没有正在输入的内容，焦点由浏览器在点击后自己落到
    * 新卡片上，重画的开销可以忽略。
    *
-   * 「手动新建自定义提供商」只在自定义段出现、排在最前（紧贴搜索框、横跨整行）：
+   * 「手动新建自定义提供商」只在自定义段出现、排在最前（第一格，与已有家同宽）：
    * 这一段里只有它是「动作」，其余都是「选择」；原先排在队尾时它跟着家数一起
    * 往下沉，建了几家之后就得先滚到底才看得见。
    * 搜索只过滤当前段的已有家；有关键词时「新建」那张卡收起来 —— 用户在找的是一家。
@@ -1072,16 +1096,37 @@
     window.wbAddImport?.setActive?.(addStep === 'pick' && addAccountType === TYPE_IMPORT);
   }
 
-  /** 切换步骤：只切两个容器的显隐，块的选择与标题由 syncAddProvider 统一收口 */
+  /**
+   * 切换步骤：开 / 关表单弹窗（列表弹窗始终在下面），块的选择与标题由
+   * syncAddProvider 统一收口。
+   *
+   * showAddStep('pick') 有两层含义：从表单弹窗里回来（关闭它），以及把步骤状态
+   * 复位 —— 两种情况要做的事一样，所以合成一处。
+   *
+   * 层叠的两层要像两个真弹窗那样对待：
+   *   · 打开表单弹窗时给列表弹窗挂 inert —— 键盘 / 鼠标都够不到下面那层，
+   *     否则 Tab 会跑进已经看不见的卡片列表里（视觉上被遮罩压着，焦点却还在）；
+   *   · 焦点跟着走：打开时记下触发的那颗卡片并把焦点移进新弹窗，关掉时还回去，
+   *     键盘用户不会在关闭后掉到页面开头。
+   */
+  let lastPickFocus = null;
+
   function showAddStep(step) {
     addStep = step;
-    const pick = $(ADD_STEP_PICK_ID);
     const form = $(ADD_STEP_FORM_ID);
-    const back = $(ADD_STEP_BACK_ID);
-    if (pick) pick.hidden = step !== 'pick';
+    const formModal = $(ADD_FORM_MODAL_ID);
+    const listModal = $('add-modal');
     if (form) form.hidden = step !== 'form';
-    // 返回键只在第 2 步有意义：第 1 步已经是这个弹窗的最外层
-    if (back) back.hidden = step === 'pick';
+    if (formModal) formModal.classList.toggle('open', step === 'form');
+    if (step === 'form') {
+      listModal?.setAttribute('inert', '');
+      lastPickFocus = document.activeElement;
+      $(ADD_FORM_CLOSE_ID)?.focus();
+    } else {
+      listModal?.removeAttribute('inert');
+      lastPickFocus?.focus?.();
+      lastPickFocus = null;
+    }
     syncAddProvider();
   }
 
@@ -1152,10 +1197,12 @@
       ? `新建${extra.label}`
       : `登录 / 添加 ${label} 账号`;
     const block = ADD_FORM_PROVIDERS[id];
-    const title = $('add-title');
-    if (title) title.textContent = addStep === 'pick' ? '添加账号' : heading;
-    // 底部操作条默认收起：只有把自己的主按钮搬进来的块（自定义提供商）才重新点亮它
-    const foot = $(ADD_FOOT_ID);
+    // 标题写在表单弹窗的头部：列表弹窗的标题始终是「添加账号」，不再跟着步骤变
+    const title = $(ADD_FORM_TITLE_ID);
+    if (title) title.textContent = heading;
+    // 表单弹窗的底部操作条默认收起：只有把自己的主按钮搬进来的块（自定义提供商）
+    // 才重新点亮它。列表弹窗那条不在这里管 —— 它归导入段（add-provider-import.js）。
+    const foot = $(ADD_FORM_FOOT_ID);
     if (foot) foot.hidden = true;
     for (const blockId of Object.values(ADD_FORM_PROVIDERS)) {
       if ($(blockId)) $(blockId).hidden = block !== blockId;
@@ -1170,63 +1217,28 @@
     //（自定义提供商要借此重读列表、切「新建 / 选择已有」并预选某一家；
     //  从预置卡进来的还要预填名称 / 协议 / Base URL）。
     // **只在第 2 步发这个信号**：那个块的 onShow 会点亮底部操作条（它把自己的
-    // 主按钮搬在底部条上），而点「上一步」返回第 1 步时本函数也会被调到 ——
-    // 无条件发信号会让「创建并添加账号」残留成第 1 步底部的孤儿按钮。
+    // 主按钮搬在底部条上），而关闭表单弹窗回到列表时本函数也会被调到 ——
+    // 无条件发信号会让「创建并添加账号」残留成孤儿按钮。
     if (extra && block && addStep === 'form') {
       extra.onShow?.({ providerId: addProviderHint, preset: addPresetKey });
     }
-    // 回到第 1 步且停在「导入」段：把底部条重新点亮成导入按钮（上面的收起
-    // 逻辑对两步通用，这里补回导入段的可见性）
+    // 回到第 1 步且停在「导入」段：把列表弹窗的底部条重新点亮成导入按钮（上面的
+    // 收起逻辑对两步通用，这里补回导入段的可见性）
     syncImportState();
   }
 
-  /** 账号类型分段下面那行说明：随选中段变化（放在 mountAddProviderUi 之前声明，加载期就要用） */
-  function syncTypeHint() {
-    const hint = $('add-type-hint');
-    if (!hint) return;
-    hint.textContent = addAccountType === TYPE_PRESET
-      ? '用 API Key 直连上游，常用提供商的地址与协议已预置。'
-      : addAccountType === TYPE_CUSTOM
-        ? '自建 OpenAI / Anthropic 兼容上游，地址与协议自己填。'
-        : addAccountType === TYPE_IMPORT
-          ? '从 cc-switch 等工具导入已配好的供应商与 API Key。'
-          : '把本机客户端的登录态包装成账号，或用官方授权页登录。';
-  }
-
   /**
-   * 锁定弹窗高度：把 .modal 的高度钉在第 1 步（选提供商）的自然高度上。
+   * 回到第 1 步并复位选中项（打开弹窗时走过这里；关闭表单弹窗时也回到同一状态）。
    *
-   * ── 为什么要在这一步量 ──────────────────────────────────────
-   * 第 1 步的高度是常量：标题 / 分段 / 说明 / 搜索固定，卡片列表固定 312px
-   * （CSS），所以「停在第 1 步时弹窗的自然高度」就是最稳的基准。第 2 步各家
-   * 表单长短差很多（WorkBuddy 的块比自定义的长一倍），不锁的话点进去弹窗就
-   * 跟着表单跳；锁掉之后由 CSS 让 body 吃掉 head / foot 之外的全部高度
-   * （见 `#add-modal .modal-body` 的 flex:1），表单比它高就内部滚动。
-   *
-   * ── 为什么只量一次 ──────────────────────────────────────────
-   * 内容结构是固定的（列表高度、标题区都不随数据变），窗口宽度变化对弹窗
-   * 宽度的影响只发生在视口极窄时（.modal 是 min(620px, 100%)），那种情况下
-   * 固定高度也只是让第 1 步轻微滚动 —— 不值得为它引入 resize 重算的复杂度。
-   * 弹窗隐藏时（display:none）offsetHeight 是 0，量到 0 就放弃，等下一次
-   * 打开弹窗再量（加载期那次调用走的就是这条）。
+   * 「锁弹窗高度」那套已经不需要了：第 2 步住进自己的弹窗（#add-form-modal）后，
+   * 两个弹窗各按内容定高 —— 表单长短不再会把列表那份弹窗顶得忽高忽低。
    */
-  function lockModalHeight() {
-    const modal = $('add-modal')?.querySelector('.modal');
-    if (!modal || modal.dataset.heightLocked) return;
-    const height = modal.offsetHeight;
-    if (height <= 0) return;
-    modal.style.height = `${height}px`;
-    modal.dataset.heightLocked = '1';
-  }
-
-  /** 回到第 1 步并复位选中项（弹窗打开时与点「上一步」时都走这里） */
   function resetAddStep() {
     addProvider = 'workbuddy';
     addProviderHint = '';
     addPresetKey = '';
     addAccountType = TYPE_PROXY;
     setSegValue($(ADD_TYPE_SEG_ID), TYPE_PROXY);
-    syncTypeHint();
     // 段的显隐一并复位：上次若停在「导入」段，面板要收起、网格要回来
     syncAddStepSections();
     syncImportState();
@@ -1234,8 +1246,6 @@
     if (search) search.value = '';
     renderProviderCards();
     showAddStep('pick');
-    // 此刻弹窗正停在第 1 步：量一次它的自然高度并锁住（只锁一次，见函数说明）
-    lockModalHeight();
     // 摘要还没到（首次打开弹窗早于首屏那次 refresh）时补拉一次再重画：
     // 否则卡片上会清一色写「还没有账号」，而账号其实早就有了。
     // 只在这一步补 —— 已经拿到摘要时不重复发请求。
@@ -1301,9 +1311,24 @@
     }
   }
 
+  /**
+   * 关掉两层弹窗。添加 / 登录成功后的收尾走它，而不是直接摘 #add-modal 的
+   * .open —— 第 2 步住在自己的弹窗里（#add-form-modal），只关外层会把它留在
+   * 屏幕上。真正的关闭动作（含登录等待的取消）归 add-account.js 的 closeModal，
+   * 这里只是把它统一叫出来，脚本顺序被改坏时再退回直接摘 class。
+   */
+  function closeAddModals() {
+    if (typeof window.wbAddAccountModal?.close === 'function') {
+      window.wbAddAccountModal.close();
+      return;
+    }
+    $('add-modal')?.classList.remove('open');
+    $(ADD_FORM_MODAL_ID)?.classList.remove('open');
+  }
+
   /** 添加成功后统一收尾：关窗、刷新列表、提示 */
   async function afterAdd(name, label) {
-    $('add-modal')?.classList.remove('open');
+    closeAddModals();
     await wbApp.refresh?.();
     toast(`✅ ${label}账号已添加${name ? `：${name}` : ''}`);
   }
@@ -1409,7 +1434,7 @@
         webModeOf(config) || 'embedded',
         config.provider),
       onSuccess: async () => {
-        $('add-modal')?.classList.remove('open');
+        closeAddModals();
         await wbApp.refresh?.();
         toast(`✅ ${config.label}账号已添加`);
       },
@@ -1551,8 +1576,18 @@
       resetAddStep();
       pickProvider(NEW_PROVIDER_CARD_ID);
     },
+    /**
+     * 收掉层叠的表单弹窗，回到列表（Escape 的第一级）：本来就是收起状态时返回
+     * false，让调用方接着关整个弹窗。步骤状态与显隐都由 showAddStep 收口。
+     */
+    closeFormStep() {
+      const formModal = $(ADD_FORM_MODAL_ID);
+      if (!formModal?.classList.contains('open')) return false;
+      showAddStep('pick');
+      return true;
+    },
     // 后注册口：add-custom-provider.js 的两种添加方式共用本文件的两步结构
-    // （返回键在头部、主按钮在底部操作条，都由它自己按 context 落到哪一种）
+    // （表单弹窗的标题与底部操作条，由它自己按 context 落到哪一种）
     registerAddForm,
     bindSeg,
     segValueOf,

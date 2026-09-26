@@ -16,8 +16,8 @@
  * **不由本块自己问**。第 1 步点的是「新建自定义提供商」那张卡还是一家已有提供商的
  * 卡片，本身就已经回答了「给谁加账号」：前者 hint 为空 → 新建，后者 hint 带着那家
  * 的 id → 加入已有并预选它。原来块内还有一条「添加方式」分段让用户再选一遍，是
- * 重复劳动；要改主意点头部的 ‹ 回第 1 步重选。于是这里只剩「按 context 落到哪种
- * 模式」，没有模式切换控件，也就没有模式状态需要在两处同步。
+ * 重复劳动；要改主意关掉表单弹窗回列表重选（第 1 步还在下面开着）。于是这里只剩
+ * 「按 context 落到哪种模式」，没有模式切换控件，也就没有模式状态需要在两处同步。
  *
  * 表单结构：
  *   · 新建模式（#custom-create-block）：名称（必填，1~64 字符，与后端
@@ -31,9 +31,10 @@
  * 标签自然宽度会让四个控件的左边缘四段锯齿，定宽后全部落在同一条竖线上。
  * 帮助文字写成控件下方的常驻 .hint，不用 placeholder —— 后者一输入就没了。
  *
- * 主按钮不在字段流里，而是搬进弹窗底部的操作条（#add-foot，见
+ * 主按钮不在字段流里，而是搬进表单弹窗底部的操作条（#add-form-foot，见
  * add-provider-forms.js 的 mountAddProviderUi）：留在字段流里它会和输入框同一个
- * 节奏、主次不分，底部条同时给失败提示一个固定位置。
+ * 节奏、主次不分，底部条同时给失败提示一个固定位置。用的是**表单弹窗**那条 ——
+ * 第 1 步的 #add-foot 归导入段。
  *
  * 依赖 wbApp、wbAccountAddForms（后注册口）与 wbProviders（自定义目录：
  * customList / refreshCustom / customRequest）与已解析的弹窗 DOM。
@@ -236,14 +237,14 @@
     syncExistingSelect();
     syncBaseHint();
     // 底部操作条默认由 add-provider-forms 收起，本块是搬了按钮进来的那一个，点亮它
-    const foot = $('add-foot');
+    const foot = $('add-form-foot');
     if (foot) foot.hidden = false;
   }
 
   /** 清空底部操作条的提示位。打开弹窗时清一次；提交失败写进去的那句要留到用户
    *  下次尝试，所以不能在 runSubmit 的 finally 里清 —— 那会把它刚写进去的立刻抹掉 */
   function clearFootHint() {
-    const hint = $('add-foot-hint');
+    const hint = $('add-form-foot-hint');
     if (hint) { hint.textContent = ''; hint.classList.remove('err'); }
   }
 
@@ -268,13 +269,14 @@
   function showSubmitError(error) {
     const message = error instanceof Error ? error.message : String(error);
     toast(`添加失败：${message}`, 'err');
-    const hint = $('add-foot-hint');
+    const hint = $('add-form-foot-hint');
     if (hint) { hint.textContent = message; hint.classList.add('err'); }
   }
 
   /** 添加成功后的统一收尾：关弹窗、刷新自定义目录与账号列表、提示（同 afterAdd） */
   async function afterCustomAdd(message) {
-    $('add-modal')?.classList.remove('open');
+    // 两层一起关（表单弹窗 + 下面的列表弹窗）：只摘外层会让表单留在屏幕上
+    window.wbAddAccountModal?.close?.();
     // 目录先刷：账号行 / 筛选器显示的提供商名都来自 wbProviders 的缓存
     void providers.refreshCustom();
     await wbApp.refresh?.();
@@ -363,7 +365,7 @@
     submitBusy = true;
     try {
       const removed = await remover(providerId);
-      if (removed) $('add-modal')?.classList.remove('open');
+      if (removed) window.wbAddAccountModal?.close?.();
     } finally {
       submitBusy = false;
     }
@@ -378,9 +380,9 @@
     label: '自定义提供商',
     buildBlock,
     mount() {
-      // 主按钮搬进弹窗底部的操作条（DOM 已由 mountAddProviderUi 建好：
+      // 主按钮搬进**表单弹窗**底部的操作条（DOM 已由 mountAddProviderUi 建好：
       // 本文件按 index.html 约定排在 add-provider-forms.js 之后加载）
-      const actions = $('add-foot-actions');
+      const actions = $('add-form-foot-actions');
       for (const [key, spec] of Object.entries(FOOT_ACTIONS)) {
         const button = document.createElement('button');
         button.type = 'button';

@@ -24,18 +24,22 @@ use crate::server::core::proxies::{resolve_account_proxy, ResolvedProxy, CLASH_M
 use crate::server::logging;
 
 use super::version::UpdateError;
+use super::USER_AGENT;
 
 /// GitHub API 要求的头部集合（对应 Node 版 githubHeaders）。
 ///
-/// token 解析顺序：`WORKBUDDY_GITHUB_TOKEN` > `GITHUB_TOKEN`（都去空白、
+/// token 解析顺序：`GITHUB_TOKEN` > 旧名 `WORKBUDDY_GITHUB_TOKEN`（都去空白、
 /// 空串当未配置）。配了 token 则限额更高（匿名 60 次/小时，带 token 5000）。
+/// 旧名是项目早期（还叫 WorkBuddy 网关时）的写法，按 paths.rs / config 的同一
+/// 惯例兼容读；文档与日志提示里只说 `GITHUB_TOKEN`。
 pub fn github_headers() -> Vec<(String, String)> {
     let mut headers = vec![
         ("Accept".to_string(), "application/vnd.github+json".to_string()),
-        ("User-Agent".to_string(), "workbuddy-local-proxy".to_string()),
+        // UA 与下载走同一个常量（mod.rs 的 USER_AGENT）：项目改名时只改一处
+        ("User-Agent".to_string(), USER_AGENT.to_string()),
         ("X-GitHub-Api-Version".to_string(), "2022-11-28".to_string()),
     ];
-    let token = ["WORKBUDDY_GITHUB_TOKEN", "GITHUB_TOKEN"]
+    let token = ["GITHUB_TOKEN", "WORKBUDDY_GITHUB_TOKEN"]
         .iter()
         .find_map(|name| {
             std::env::var(name)

@@ -203,11 +203,10 @@
   /**
    * 底部条上的「导入所选」按钮：可见性、文案（带数量）与禁用态。
    *
-   * 底部操作条本身默认由 forms 的 syncAddProvider 收起（它管所有步骤 / 块的
-   * 切换），谁把自己的主按钮搬进来谁负责点亮 —— 自定义块在 onShow 里
-   * `foot.hidden = false`，这里是同一手法。**只收自己点亮的**（footLit）：
-   * 第 2 步的 foot 归自定义块管，本模块的 setActive(false) 在那里被调到时
-   * 不能把别人点亮的条收掉。
+   * 用的是**列表弹窗**那条底部条（#add-foot）：导入段在第 1 步里就地完成，
+   * 它的主按钮不该跑到表单弹窗里。第 2 步的主按钮走另一条（#add-form-foot，
+   * 归自定义块）—— 两条各归各的层级，这里只碰自己那条。
+   * 收起逻辑仍然「只收自己点亮的」（footLit），理由同上：别人的条不归本模块管。
    */
   function syncFoot() {
     const foot = $('add-foot');
@@ -283,7 +282,7 @@
       await wbApp.refresh?.();
     }
     if (ok > 0 && !failed.length) {
-      $('add-modal')?.classList.remove('open');
+      window.wbAddAccountModal?.close?.();
       toast(`✅ 已从 cc-switch 导入 ${ok} 个供应商`);
     } else if (ok > 0) {
       toast(`已导入 ${ok} 个，失败 ${failed.length} 个（失败项已标注在列表里）`, 'err');

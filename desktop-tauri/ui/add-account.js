@@ -15,7 +15,10 @@ function openModal() {
 }
 
 function closeModal() {
+  // 两层一起关：第 2 步住在外层弹窗之上的表单弹窗（#add-form-modal），
+  // 只摘外层那份会让表单留在屏幕上（见 add-provider-forms.js 的 showAddStep）。
   $('add-modal').classList.remove('open');
+  $('add-form-modal')?.classList.remove('open');
   // 关窗即放弃等待：通知主进程中止后端轮询，否则按钮会一直卡在禁用态。
   // 不传 provider = 「谁在等待就取消谁」：两家共用同一个弹窗，这里无需区分。
   void window.wbWebLogin?.cancelIfActive('');
@@ -171,8 +174,8 @@ const workbuddyLogin = window.wbWebLogin.create({
     return {
       button: external ? '在浏览器中打开登录页' : '打开网页登录',
       hint: external
-        ? '将用系统默认浏览器打开，登录完成后自动加入账号列表；关掉此窗口即取消等待'
-        : '将打开内嵌窗口，登录完成后自动加入账号列表；关掉此窗口即取消等待',
+        ? '系统浏览器打开（复用已登录账号）；完成后自动加入列表'
+        : '内嵌窗口打开；完成后自动加入列表，关窗即取消等待',
     };
   },
   start: () =>
@@ -203,7 +206,13 @@ $('add-social-restore')?.addEventListener('change', () => {
   // 勾选本身只影响发起登录时传给壳侧的值，不需要重建界面，但要让提示保持最新
   syncLoginModeHint();
 });
-document.addEventListener('keydown', event => { if (event.key === 'Escape') closeModal(); });
+// Esc 收最上面那层：表单弹窗开着就先收它（回到提供商列表），再按一次才关整个弹窗。
+// 「开着哪一层」的真相在 add-provider-forms 的步骤状态里，所以由它回答（closeFormStep）。
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape') return;
+  if (window.wbAccountAddForms?.closeFormStep?.()) return;
+  closeModal();
+});
 
 // 挂弹窗里两处静态分段控件的岛。放在文件末尾：那时 segState / segIslands 都已初始化。
 mountAddSegs();
