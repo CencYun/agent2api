@@ -103,9 +103,24 @@
   --color-intl: var(--ui-intl);
   --color-intl-soft: var(--ui-intl-soft);
   --color-intl-bd: var(--ui-intl-bd);
+  /* 敏感词命中标签的紫（Badge 的 sensitive 档） */
+  --color-sensitive: var(--ui-sensitive);
+  --color-sensitive-soft: var(--ui-sensitive-soft);
+  --color-sensitive-bd: var(--ui-sensitive-bd);
   /* 次级文字中间档（--text-2）：muted-foreground 是第三档（--text-3） */
   --color-subtle: var(--ui-text-2);
   --color-nav-hover: var(--ui-nav-hover);
+  /* 导航项 / 左栏的配色（NavItem 用）。
+     这几个是 ui/css/tokens.css 已经定好、并且随主题自动翻转的令牌 —— 组件库
+     不另立一份取值，而是**引用**它们（取不到时用同一档的兜底值）。
+     复制取值会有两处真源：主题一改就漂移，而这类「选中态底色」的漂移肉眼很难发现。
+     兜底值仅供组件库在宿主没加载 tokens.css 时单独使用。 */
+  --color-sidebar-fg: var(--sidebar-fg, oklch(0.43287 0.01676 258.37));
+  --color-sidebar-muted: var(--sidebar-muted, oklch(0.512 0.02088 261.29));
+  --color-rail-bg: var(--rail-bg, oklch(0.955 0.004 286));
+  --color-nav-selected-bg: var(--nav-selected-bg, oklch(0.89318 0.04237 253.82));
+  --color-nav-selected-border: var(--nav-selected-border, oklch(0.83311 0.05788 254.15));
+  --color-nav-selected-fg: var(--nav-selected-fg, oklch(0.42649 0.12275 255.6));
 
   --color-chart-1: var(--ui-chart-1);
   --color-chart-2: var(--ui-chart-2);
@@ -208,6 +223,12 @@
   --ui-intl: oklch(0.52 0.16 268);
   --ui-intl-soft: color-mix(in srgb, var(--ui-intl) 10%, white);
   --ui-intl-bd: color-mix(in srgb, var(--ui-intl) 28%, white);
+  /* 敏感词命中标签的紫：它是**第三类**状态，不能借用 cn（红，读起来像失败）或
+     intl（靛蓝，与「国际版」语义绑着）。取值与 ui/css/page-requests.css 里
+     那套手写紫逐字一致 —— 迁移期间两处并存，改一处必须改另一处。 */
+  --ui-sensitive: oklch(0.45 0.18 305);
+  --ui-sensitive-soft: oklch(0.55 0.18 305 / 14%);
+  --ui-sensitive-bd: oklch(0.55 0.18 305 / 32%);
   --ui-control-bg: oklch(0.95815 0 0);
   --ui-control-hover: oklch(0.93214 0.00536 286.3);
   --ui-control-border: oklch(0.145 0 0 / 14%);
@@ -299,6 +320,9 @@
   --ui-intl: oklch(0.68 0.14 268);
   --ui-intl-soft: oklch(0.68 0.14 268 / 14%);
   --ui-intl-bd: oklch(0.68 0.14 268 / 32%);
+  --ui-sensitive: oklch(0.82 0.12 305);
+  --ui-sensitive-soft: oklch(0.7 0.16 305 / 16%);
+  --ui-sensitive-bd: oklch(0.7 0.16 305 / 34%);
   --ui-control-bg: oklch(0.36572 0.0085 285.97);
   --ui-control-hover: oklch(0.40758 0.00993 285.95);
   --ui-control-border: oklch(1 0 0 / 15%);
@@ -396,6 +420,9 @@
     --ui-intl: oklch(0.68 0.14 268);
     --ui-intl-soft: oklch(0.68 0.14 268 / 14%);
     --ui-intl-bd: oklch(0.68 0.14 268 / 32%);
+    --ui-sensitive: oklch(0.82 0.12 305);
+    --ui-sensitive-soft: oklch(0.7 0.16 305 / 16%);
+    --ui-sensitive-bd: oklch(0.7 0.16 305 / 34%);
     --ui-control-bg: oklch(0.36572 0.0085 285.97);
     --ui-control-hover: oklch(0.40758 0.00993 285.95);
     --ui-control-border: oklch(1 0 0 / 15%);

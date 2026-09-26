@@ -2,7 +2,7 @@ import * as React from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import {
-  Badge, BadgeDot, Button, SegmentedControl,
+  Badge, BadgeDot, Button, Pager, SegmentedControl, Toggle,
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
   type SegmentedControlOption,
 } from '@ui'
@@ -46,10 +46,10 @@ import {
  *
  * ── 混合原则 ─────────────────────────────────────────────────
  * 布局类名照旧（.panel / .log-filters / .log-list / .log-pager …，页面 CSS 用它们分配高度与重排）；
- * 控件换成组件库：Button / Badge / Select / SegmentedControl。列表里两处刻意**不**换：
- *   · 状态列的阶段徽章：HTML 由 wbRequestPhase 产出（详情弹窗读同一份，三处逐字一致是硬要求）；
- *   · 重试列的两枚标签：必须是可聚焦的 button 且带 data-req-hover / data-req-id（悬停面板的委托
- *     与键盘可达都挂在上面），换组件库的 Badge（span）会同时丢掉这两条。
+ * 控件换成组件库：Button / Badge / Toggle / Pager / Select / SegmentedControl。列表里只有一处
+ * 刻意**不**换：状态列的阶段徽章 —— HTML 由 wbRequestPhase 产出（详情弹窗读同一份，三处逐字
+ * 一致是硬要求）。重试列那两枚标签则走 Badge 的 `render`：徽章的观感与「可聚焦、带
+ * data-req-hover / data-req-id」两样都要，render 正是组件库为这件事补的出口。
  */
 
 /* ─── 类型 ─────────────────────────────────── */
@@ -730,18 +730,24 @@ function requestCell(entry: RequestEntry, column: VisibleColumn): React.ReactNod
       if (showChain) {
         const count = attempts > 1 ? attempts : countRetries(entry)
         tags.push(
-          <button key='chain' type='button' className='badge tag warn req-hover-tag'
-            data-req-hover='chain' data-req-id={identity}>
+          // Badge 借 render 渲染成**真 button**：悬停面板的委托按 `[data-req-hover]` 找锚点、
+          // 键盘可达靠 focusin 委托，span 两样都给不了。事件与 data-* 由 Base UI 合并到这颗
+          // button 上（不是覆盖），观感则回到组件库的语义档（原来手写的 `warn` 即 warning）
+          <Badge key='chain' variant='warning' shape='tag' render={<button type='button' />}
+            className='req-hover-tag' data-req-hover='chain' data-req-id={identity}>
             {count > 1 ? `重试 ${count}` : '重试'}
-          </button>,
+          </Badge>,
         )
       }
       // 敏感词命中：判据是「命中表非空」。标签只写一个「敏」字（这一列只有 52px，三个字会把
-      // 标签撑得比「重试 N」还宽）；完整含义交给悬停面板，aria-label 补上完整说法
+      // 标签撑得比「重试 N」还宽）；完整含义交给悬停面板，aria-label 补上完整说法。
+      // 紫色档（sensitive）是这次给组件库补的：它既不是「失败」也不是「国际版」，
+      // 是第三类事实；详情弹窗的展开形态读的是同一档，两处不会再有色差
       if (Array.isArray(entry.sensitiveHits) && entry.sensitiveHits.length) {
         tags.push(
-          <button key='sensitive' type='button' className='badge tag req-hover-tag sensitive'
-            data-req-hover='sensitive' data-req-id={identity} aria-label='命中了敏感词'>敏</button>,
+          <Badge key='sensitive' variant='sensitive' shape='tag' render={<button type='button' />}
+            className='req-hover-tag' data-req-hover='sensitive' data-req-id={identity}
+            aria-label='命中了敏感词'>敏</Badge>,
         )
       }
       if (!tags.length) return <span key={key} className={`req-none ta-${align}`}>-</span>
@@ -1108,9 +1114,12 @@ function RequestsPage() {
   /**
    * 「仅看进行中」：与其它筛选并存，唯独与状态下拉互斥 —— 「成功 / 失败」和「进行中」是 status
    * 维度上的并列取值，同时发两个只会打架。开启时把下拉停用（视觉上说明条件已被接管）。
+   *
+   * 取值以 Toggle 给的 next 为准（而不是就地取反）：按回未激活时 filterParams 会退回状态下拉
+   * 当前选的那一档，取消筛选是「真的取消了」，不是把 running 留在查询串里。
    */
-  function toggleRunningOnly(): void {
-    const next = !current.runningOnly
+  function onRunningOnlyChange(next: boolean): void {
+    if (next === current.runningOnly) return
     applyRunningOnly(next)
     void loadPanel({ resetPage: true })
   }
@@ -1222,12 +1231,13 @@ function RequestsPage() {
               ))}
             </SelectContent>
           </Select>
-          {/* 仅看进行中：单颗切换按钮（旧实现是 .seg 里的一颗 .seg-item）。选中态走品牌浅底，
-              与旧 .seg-item.active 同观感；aria-pressed 让读屏软件也知道它是个开关 */}
-          <Button id='btn-req-running' size='sm' variant='outline' aria-pressed={runningOnly}
-            className={`shrink-0${runningOnly ? ' border-primary-bd bg-primary-soft text-primary-fg hover:bg-primary-tint' : ''}`}
-            title='只显示正在转发中的请求（状态列按阶段显示：连接中 / 等待响应 / 响应中 / 重试中，用时列显示已用时）'
-            onClick={toggleRunningOnly}>仅看进行中</Button>
+          {/* 仅看进行中：开关型筛选用 Toggle —— 只有两态、且能按回未激活（分段控件是单选且不可
+              取消，按钮没有选中态，上一轮只能将就）。variant='outline' 与同排的下拉同脸，
+              size='default'（30px）与分段控件、下拉触发器同高；激活态的品牌浅底与 aria-pressed
+              都由组件库给，不再手写类名。互斥规则不变：开启时状态下拉停用（见上面那颗 Select） */}
+          <Toggle id='btn-req-running' variant='outline' size='default' pressed={runningOnly}
+            onPressedChange={onRunningOnlyChange}
+            title='只显示正在转发中的请求（状态列按阶段显示：连接中 / 等待响应 / 响应中 / 重试中，用时列显示已用时）'>仅看进行中</Toggle>
           <div className='spacer' />
           <span className='panel-sub' id='req-summary'>{summaryParts.join(' · ')}</span>
         </div>
@@ -1248,14 +1258,11 @@ function RequestsPage() {
         <span>上报的是网关报文里的模型名，别名 / 映射后的名字按上游收到的那次记录</span>
         <span>账号为空表示请求在选定账号之前就失败了</span>
         <div className='spacer' />
-        <div className='log-pager'>
-          <Button id='btn-req-prev' size='sm' variant='outline' disabled={offset <= 0}
-            onClick={() => gotoPage(Math.floor(current.offset / PAGE_SIZE))}>上一页</Button>
-          <Button id='btn-req-next' size='sm' variant='outline'
-            disabled={current.offset + PAGE_SIZE >= data.matched}
-            onClick={() => gotoPage(Math.floor(current.offset / PAGE_SIZE) + 2)}>下一页</Button>
-          <span id='req-page-info' className='log-pager-info'>{`第 ${currentPage} / ${pageCount} 页`}</span>
-        </div>
+        {/* 分页器交给组件库的 Pager：两颗按钮的边界判断（首页不能退、末页不能进）与「第 N / M 页」
+            读数都在它里面，读数用等宽数字。className 保留 .log-pager —— 底栏的间距与「窄窗口整组
+            换行」由 page-logs.css 那条规则分配。旧的三颗 id（btn-req-prev / btn-req-next /
+            req-page-info）随组件一起去掉，全仓 grep 过：没有别处查询它们 */}
+        <Pager page={currentPage} pageCount={pageCount} onPageChange={gotoPage} className='log-pager' />
       </div>
     </section>
   )
