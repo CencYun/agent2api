@@ -56,13 +56,6 @@ impl Region {
         }
     }
 
-    pub fn center(self) -> &'static str {
-        match self {
-            Self::Global => "https://center.qoder.sh",
-            Self::Cn => "https://gateway.qoder.com.cn",
-        }
-    }
-
     /// 网页门户基址（登录页、账号设置页所在的那台主机）。
     ///
     /// 与 [`Self::open_api`] 是两台不同的主机：门户负责「人看的页面」，
@@ -101,7 +94,37 @@ pub const DEVICE_POLL_PATH: &str = "/api/v1/deviceToken/poll";
 pub const EXCHANGE_PATH: &str = "/api/v1/jobToken/exchange";
 pub const USER_INFO_PATH: &str = "/api/v1/userinfo";
 pub const USAGE_PATH: &str = "/api/v2/quota/usage";
-pub const REFRESH_PATH: &str = "/algo/api/v3/user/refresh_token";
+
+/// 设备流凭据（`dt-` / `drt-`）的续期端点，挂在 [`Region::open_api`] 上。
+///
+/// ── 为什么不是 `{center}/algo/api/v3/user/refresh_token` ──────────
+/// 那条「认证中心」端点是给 PAT 换来的作业令牌（`jt-` / `jrt-`）用的，且要求
+/// `appcode: cosy` + `Date` + `signature = md5("cosy&<secret>&<date>")` 这套签名头
+/// （`center.qoder.sh` 与 `gateway.qoder.com.cn` 同名同签）。我们的设备流凭据走
+/// 那条路会**连签名都没有**，被 WAF 直接丢掉 —— 实测两个地区都稳定返回
+/// `403 {"errorMessage":"Request discarded","errorCode":"Forbidden"}`，与凭证
+/// 有效性、地区选择都无关。补上签名头后同一请求会从 403 变成 400 业务校验，
+/// 足以证明 403 来自缺签名而不是令牌本身。
+///
+/// 设备流凭据的续期在 **openapi 主机**上、且**不需要任何签名**（对照实现里
+/// 只带 `content-type` / `accept` 两个头就能刷新成功）。
+pub const DEVICE_REFRESH_PATH: &str = "/api/v1/deviceToken/refresh";
+
+/// 作业令牌（`jrt-`，PAT 换来的那一族）的续期端点。
+///
+/// 与 [`DEVICE_REFRESH_PATH`] 同在 openapi 主机上、同样不要签名，只有路径不同。
+/// 两者**不可互换**：把 `drt-` 交给作业令牌端点、或把 `jrt-` 交给设备端点，
+/// 上游都按「令牌无效」拒绝。
+pub const JOB_REFRESH_PATH: &str = "/api/v1/jobToken/refresh";
+
+/// 续期请求的头：**不带任何签名，也不带 Authorization**。
+///
+/// 两条续期路径的鉴权凭据都在请求体里（`{"refresh_token": "…"}`），带旧令牌
+/// 没有意义。多带 `Cosy-*` 也不会让 center 那一族接受（那需要的是 appcode 签名），
+/// 因此这里只保留一个可辨识的 UA。
+pub fn refresh_headers() -> Vec<(String, String)> {
+    vec![("User-Agent".to_string(), "qoder-local-proxy".to_string())]
+}
 
 pub fn open_api_headers(token: Option<&str>) -> Vec<(String, String)> {
     let mut headers = vec![

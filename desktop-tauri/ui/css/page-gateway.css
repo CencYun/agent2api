@@ -79,53 +79,21 @@
 #models-search { flex: 0 0 auto; width: 240px; }
 
 /* 刷新说明与逐家结果：常驻在表格下方，不随 toast 消失；有失败才标红 */
-/* ─── 「获取模型」弹窗（models-fetch-modal.js）───
-   形态对照 OmniProxy 的 ModelDiscoveryModal：上面一行工具（汇总 / 搜索 / 选择 /
-   获取），中间一张表，底部导入。表格沿用 .models-table（与模型管理页同一张脸的
-   列宽与字号），这里只补列宽与表格区的高度上限。
-   工具行的左右分工：**汇总在左、动作在右**（获取模型是最右那颗）—— 用户扫一眼
-   左边就知道这次的结果（N 家 · 成功 X · 失败 Y），右边的按钮才是下一个动作。 */
-.fm-tools { align-items: center; }
-.fm-search { flex: 0 0 auto; width: 240px; }
-.fm-wrap { max-height: min(48vh, 460px); }
-/* 列宽写在 <col> 上（合计 100%，table-layout: fixed 下按 colgroup 分配）——
-   与模型管理页同一口径：没拖过的列走这里的百分数，拖过的列由 table-columns.js
-   写 col 的 inline width 覆盖（th 上不能写宽度，它会盖过 col，拖动就失效）。
-   百分数按弹窗实际表宽折算：内置家约 872px（920 减内边距）、三列形态约 504px。
+/* ─── 「获取模型」弹窗的样式已随迁移移除 ───────────────
+   弹窗迁到组件库后（ui-islands/src/islands/models-fetch-modal.tsx），这里原先那套
+   .fm-tools / .fm-search / .fm-wrap / #fm-table-* .f-* 列宽 / .fm-table .detail /
+   .modal-narrow 全部失去消费者，一并删除。搬走的口径（都是逐字照抄的，改之前先读
+   岛里对应的注释）：
 
-   六列怎么分（每格还要减去 td 的左右 14px padding）：更新日期 19%（约 166px，
-   减 padding 后 138px）装下 `formatTime` 的完整输出（等宽 11.5px 下
-   2026/9/25 14:03:11 约 131px）—— 只给「日期」会在同一天的两次刷新之间
-   分不出先后，而这个弹窗的用处之一正是看清单有多旧；模型来源 25% 不动（那列
-   的下限由邮箱长度定，见下）；说明 24%（约 209px）比最长的那句「远程目录已
-   更新，「来源」列会显示为「远程」」窄一点，它会折成两行 —— `.detail` 的行高
-   就是为多行设的，折行比截断好，且只有「已刷新」的行吃这句长文案。差额由
-   提供商 / 状态 / 模型数三列各让一点：它们装的是短词（提供商名 / 两字徽章 /
-   「9 个」），让完仍够。 */
-#fm-table-intl .f-provider { width: 15%; }
-/* 模型来源 25%：这一格的展示名以邮箱为主（emailAsName 的家，见 models-fetch-modal
-   的 accountLabel），典型邮箱约 22 字符（如 oyl70969337@gmail.com ≈ 139px）——
-   22% 会把触发器上的文本截掉，25% 刚好装下；宽度从最宽的说明列借 */
-#fm-table-intl .f-source { width: 25%; }
-#fm-table-intl .f-state { width: 10%; }
-#fm-table-intl .f-count { width: 7%; }
-#fm-table-intl .f-note { width: 24%; }
-#fm-table-intl .f-updated { width: 19%; }
-/* 自定义家的窄形态（三列）：勾选 40px ≈ 8%、状态 92px ≈ 18%、上游模型吃剩余 */
-#fm-table-custom .f-pick { width: 8%; }
-#fm-table-custom .f-model { width: 74%; }
-#fm-table-custom .f-state { width: 18%; }
-/* 「模型来源」列：一格一个账号下拉（宽度交给原生 select 当锚，外壳自动跟随）。
-   外壳还须显式撑满单元格：inline-flex 的 shrink-to-fit 会把外壳收到「最长选项的
-   自然宽」，长文本（邮箱）时比单元格窄出右箭头那一档，触发器里的文本反而先被
-   截断；width:100% 让外壳与单元格同宽，文本区直接按单元格宽度算 */
-.fm-table .fm-source .select-shell { width: 100%; }
-.fm-table .fm-source select { width: 100%; }
-/* 自定义提供商的窄形态：表只有「勾选 / 上游模型 / 状态」三列，用 920px 的宽表
-   右半全是空白 —— 宽度收到 60%（920 × 0.6 ≈ 552px），与内置家那张宽表区分开 */
-.modal-narrow { width: min(552px, 100%); }
-/* 内置家那张结果表里「说明」列的小字：与表格其它列同基线，不抢主信息 */
-.fm-table .detail { color: var(--text-3); font-size: 11.5px; line-height: 1.5; }
+   · 列宽百分数：从「按 id 写的 CSS」搬到岛里 `<col>` 的 Tailwind 类上（列宽层
+     table-columns.js 仍按表 id + col 的 data-col 定位，所以表 id 保留了）；
+     六列 15/25/10/7/24/19、三列 8/74/18 —— 「更新日期」要给足 19% 才装得下完整
+     时间戳（只给日期会在同一天两次刷新间分不出先后），「模型来源」25% 由邮箱长度
+     定（emailAsName 的家以邮箱为主名）。
+   · 滚动盒高度上限 min(48vh, 460px)、工具行「汇总在左、动作在右」的分工、
+     窄形态 552px / 宽形态 920px：都改由岛里的 Tailwind 类表达。
+   · 「模型来源」下拉：旧实现靠原生 select 当宽度锚（.select-shell 撑满单元格），
+     新实现直接用组件库的 Select，宽度由单元格自己管。 */
 
 /* 表格（模型管理 / 网关 Key 共用）：贴面板左右边缘，表头粘顶。
    overflow-anchor 同 .page.active：tbody 重建时不做锚定补偿，行内点开关视口不动 */

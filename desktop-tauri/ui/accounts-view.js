@@ -557,7 +557,8 @@
           return;
         }
         // 并发上限：通用账号属性（内置 + custom 都有这一项），点开小对话框。
-        // 弹窗本体在 account-conc-dialog.js（单字段的弹窗不值得让本文件再长）
+        // 弹窗本体已迁到组件库（ui-islands/src/conc-dialog.tsx，随 islands/ui.js 加载），
+        // 这里仍是「拿账号对象 → open」，调用方式没变。
         if (menuAction === 'maxConcurrent') {
           const account = accounts().find(item => item.id === id);
           if (account) window.wbAccountConcDialog?.open(account);
