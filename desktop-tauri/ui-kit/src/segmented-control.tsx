@@ -1,13 +1,14 @@
 import * as React from 'react'
 import { Radio } from '@base-ui/react/radio'
 import { RadioGroup } from '@base-ui/react/radio-group'
+import { cn } from './lib/cn'
 
 /**
  * 分段控件：一行互斥的档位选择。全站的分段筛选都走这一个组件。
  *
  * 行为层（焦点管理、方向键切换、roving tabindex、单选语义）全部交给 Base UI 的
- * RadioGroup；视觉沿用 ui/css 里既有的 `.seg` / `.seg-item` —— 本组件只把 Base UI
- * 的状态属性挂到那两个类名上，不引入第二套观感。
+ * RadioGroup；视觉对齐 ui/css/components.css 的 `.seg` / `.seg-item` /
+ * `.seg-thumb` 一族，逐项复刻（容器 2px 内衬、项 24px 高、滑块 0.2s 平移）。
  *
  * 为什么用 RadioGroup 而不是 ToggleGroup：这些都是「多选一」的筛选，
  * 单选语义（`role="radiogroup"`，方向键移动即选中）比切换按钮组
@@ -20,21 +21,18 @@ import { RadioGroup } from '@base-ui/react/radio-group'
  * 生成的 props 排在 compositeProps 之后，会把 CompositeItem 注册的方向键处理覆盖掉
  * —— 实测 button 形态下按方向键焦点纹丝不动，span 形态下正常移动。
  *
- * 换成 span 的代价是它不像 button 那样自带「文字不可拖选」，已在 `.seg-item` 补了
- * `user-select: none`。原有那几条 `border: 0` / `box-shadow: none` 对 span 无害，
- * 留着是因为同一份声明还要继续服务还没岛化的那几处。
- *
- * 选中态用一枚滑动指示器（`.seg-thumb`）承载，不再让选中项自己变色 ——
- * 这样切换档位时能看到色块平移过去，而不是硬切。思路取自 OmniUI 的
- * SegmentedControl：量出选中项的位置与宽度喂给 transform / width（见 measure）。
+ * 选中态用一枚滑动指示器承载，不再让选中项自己变色 —— 这样切换档位时能看到
+ * 色块平移过去，而不是硬切。做法是量出选中项的位置与宽度喂给 transform / width
+ * （见 measure）。也正因如此，选中项文字不加粗：字重会改元素宽度，切换瞬间整条
+ * 控件重新排版、滑块动画的目标位置跟着跳一下。
  */
 
 type SegmentedControlOption<Value extends string> = {
   value: Value
-  label: string
+  label: React.ReactNode
   /**
-   * 计数徽标（`.seg-count`）：不传就不渲染徽标。
-   * 传 0 时整项按「空段」弱化（`.zero`），与账号页筛选的既有约定一致。
+   * 计数徽标：不传就不渲染徽标。
+   * 传 0 时整项按「空段」弱化，与账号页筛选的既有约定一致。
    */
   count?: number
   disabled?: boolean
@@ -48,7 +46,7 @@ type SegmentedControlProps<Value extends string> = {
   /** 无障碍名：这一组档位在筛什么 */
   'aria-label': string
   disabled?: boolean
-  /** 附加到 `.seg` 容器上的类名（弹窗里的 add-seg 就是靠它带尺寸覆盖） */
+  /** 附加到容器上的类名（弹窗里的紧凑档位就是靠它带尺寸覆盖） */
   className?: string
 }
 
@@ -121,7 +119,11 @@ function SegmentedControl<Value extends string>({
   return (
     <RadioGroup<Value>
       ref={containerRef}
-      className={`seg seg-sliding${className ? ` ${className}` : ''}`}
+      data-slot='segmented-control'
+      className={cn(
+        'relative inline-flex gap-0.5 rounded-md border border-control-border bg-control p-0.5',
+        className
+      )}
       value={value}
       disabled={disabled}
       onValueChange={next => onValueChange(next)}
@@ -130,25 +132,50 @@ function SegmentedControl<Value extends string>({
       {/* 纯装饰：位置由 JS 喂，交互一律穿透给下面的选项 */}
       <span
         aria-hidden='true'
-        className='seg-thumb'
+        data-slot='segmented-thumb'
         data-ready={thumb.ready ? 'true' : 'false'}
         data-animate={animate ? 'true' : 'false'}
+        className={cn(
+          'pointer-events-none absolute top-0.5 bottom-0.5 left-0 rounded-sm bg-primary-soft',
+          'data-[ready=false]:opacity-0',
+          'data-[animate=true]:transition-[transform,width] data-[animate=true]:duration-200 data-[animate=true]:ease-in-out'
+        )}
         style={{ transform: `translateX(${thumb.left}px)`, width: thumb.width }}
       />
       {options.map(option => (
         <Radio.Root
           key={option.value}
           value={option.value}
+          data-slot='segmented-item'
           disabled={option.disabled}
-          className='seg-item'
           data-zero={option.count === 0 ? 'true' : undefined}
+          className={cn(
+            'group/seg relative z-[1] inline-flex h-6 items-center gap-[5px] rounded-sm border-0 bg-transparent px-2.5',
+            'text-xs font-medium whitespace-nowrap text-subtle select-none',
+            'transition-[background-color,color] duration-150 ease-out',
+            'hover:bg-nav-hover hover:text-foreground',
+            // 选中项让出底色（底色归滑块画），只留文字色
+            'data-checked:bg-transparent data-checked:text-primary-fg data-checked:hover:bg-transparent',
+            'data-disabled:cursor-not-allowed data-disabled:opacity-40',
+            // 计数为 0 的分段弱化；当前选中的那一档即使为 0 也保持正常
+            'data-[zero=true]:data-unchecked:opacity-45'
+          )}
           ref={(node: HTMLSpanElement | null) => {
             if (node) itemsRef.current.set(option.value, node)
             else itemsRef.current.delete(option.value)
           }}
         >
           {option.label}
-          {option.count !== undefined && <span className='seg-count'>{option.count}</span>}
+          {option.count !== undefined && (
+            <span
+              className={cn(
+                'min-w-4 rounded-pill bg-surface-3 px-[5px] text-center text-[10.5px] font-semibold tabular-nums text-muted-foreground',
+                'group-data-checked/seg:bg-primary-tint group-data-checked/seg:text-primary-fg'
+              )}
+            >
+              {option.count}
+            </span>
+          )}
         </Radio.Root>
       ))}
     </RadioGroup>

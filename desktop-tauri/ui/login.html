@@ -90,9 +90,11 @@
           灰色会把「我不是机器人」压下去、变灰）—— 用 altcha-widget 前缀
           提高特异性盖过全局规则；
        ③ 隐藏品牌 footer（altcha.org 外链，与 OmniProxy 的取用方式一致）。 */
-    altcha-widget { display: block; margin: 20px 0; }
-    /* 官方脚本注入的全局 button 样式带 margin-top: 10px，会破坏下方间距对称 */
-    #submit { margin-top: 0; }
+    /* 组件只在开启校验时占位：校验关闭后它被隐藏，margin 会随 display:none
+       一起消失，与按钮之间的间距改由 #submit 自己的 margin-top 撑住
+       （两侧各 20px，开关前后视觉一致） */
+    altcha-widget { display: block; margin: 20px 0 0; }
+    #submit { margin-top: 20px; }
     altcha-widget .altcha { width: fit-content; max-width: 100%; margin: 0 auto; box-sizing: border-box; }
     altcha-widget .altcha-label label { margin: 0; font-size: 13px; color: inherit; }
     altcha-widget div:has(> .altcha-logo) { display: none; }
@@ -155,6 +157,7 @@
       // 提交失败要 widget.reset() 重新验证。网关关闭了校验时领题回 400，
       // 整个 widget 隐藏，提交不带 payload。
       var captchaPayload = null;
+      var captchaRequired = true; // 探测完成前先按「需要验证」保守处理
       var widget = document.getElementById('altcha');
 
       widget.addEventListener('verified', function (event) {
@@ -166,7 +169,14 @@
 
       // 探测开关：未启用时领题回 400，隐藏验证行（提交自然不带 payload）
       fetch('/api/panel/captcha').then(function (resp) {
-        if (!resp.ok) widget.style.display = 'none';
+        if (resp.ok) return;
+        captchaRequired = false;
+        widget.style.display = 'none';
+        // widget 会在表单里留一个 required 的复选框（#altcha_checkbox）。它被
+        // 隐藏后用户勾不到，浏览器却仍拿它做原生校验：校验不过就不派发 submit，
+        // 而隐藏元素连「请勾选」的气泡都弹不出来 —— 表现为点「登录」毫无反应。
+        // 关掉原生校验，改由下面的提交逻辑自己把关（它本来就会检查各项）。
+        $('form').noValidate = true;
       }).catch(function () { /* 网关不可达：widget 自会显示错误 */ });
 
       // 决定模式：没有任何管理员 → 注册；否则登录
@@ -199,15 +209,18 @@
             return;
           }
           var detail = result.payload && (result.payload.error || result.payload);
-          errorEl.textContent = (detail && detail.message) || '请求失败，请重试';
+          // 后端的错误信封是 {success:false, error:"账号或密码不正确"}，error
+          // 是字符串；也兼容 {message:"…"} 形态的对象
+          if (detail && typeof detail === 'object') detail = detail.message;
+          errorEl.textContent = detail || '请求失败，请重试';
           button.disabled = false;
           captchaPayload = null; // payload 是一次性的：失败后重新验证
-          widget.reset();
+          if (captchaRequired) widget.reset();
         }).catch(function () {
           errorEl.textContent = '无法连接网关';
           button.disabled = false;
           captchaPayload = null;
-          widget.reset();
+          if (captchaRequired) widget.reset();
         });
       }
 
@@ -220,7 +233,7 @@
           errorEl.textContent = '请填写账号与密码';
           return;
         }
-        if (widget.style.display !== 'none' && !captchaPayload) {
+        if (captchaRequired && !captchaPayload) {
           errorEl.textContent = '请先勾选「我不是机器人」完成验证';
           return;
         }

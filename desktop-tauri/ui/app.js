@@ -188,7 +188,12 @@ function renderTopbarStatus() {
   const mirror = id => {
     const badge = $(id);
     if (!badge || !badge.textContent || badge.textContent === '—') return '';
-    return `<span class="badge ${badge.className.replace('badge', '').trim()}">${esc(badge.textContent)}</span>`;
+    // 语义色优先读 data-tone：徽标可能已是组件库的 Badge，它的 className 是一串
+    // Tailwind 工具类（inline-flex / bg-*-soft …），按「className 去掉 badge」拆修饰
+    // 会拆出一串垃圾类名塞进顶栏。迁到组件库的面板都挂 data-tone（ok / warn / bad，
+    // 无修饰为空串）；还没迁的老徽标没有该属性，回落到原来的 className 拆法。
+    const kind = badge.dataset.tone ?? badge.className.replace('badge', '').trim();
+    return `<span class="badge ${kind}">${esc(badge.textContent)}</span>`;
   };
 
   const views = {
@@ -512,71 +517,12 @@ function syncUpdateBadge() {
 function updateUpdateBadge(info) {
   lastUpdateInfo = info || null;
   syncUpdateBadge();
-  maybeShowUpdateModal(info);
+  // 「检测到更新」弹窗已迁到组件库（见 ui-islands/src/islands/update-panel.tsx）：
+  // 弹与不弹的判定（跳过此次更新的版本号 / 本会话已弹过 / 人已在设置页）与弹窗本体
+  // 都在那边，这里只把结果递过去。app.js 不再持有弹窗 DOM、跳过键与会话守卫 ——
+  // 那套状态若两边各留一份，判定必然漂移（这正是本次迁移要避免的）。
+  window.wbUpdatePanel?.showUpdateModal?.(info);
 }
-
-// ─── 「检测到更新」弹窗 ────────────────────────
-
-/** 「跳过此次更新」记在 localStorage 的键（值 = 跳过的版本号） */
-const UPDATE_SKIP_KEY = 'workbuddy-desktop-update-skip';
-/** 本会话内已弹过提示的版本号：用户选「取消」后，同一版本不再连着弹
- *  （后端的定时检查到点会再次发现它，弹一次/轮是预期节奏） */
-let promptedUpdateVersion = '';
-
-function closeUpdateModal() {
-  $('update-modal')?.classList.remove('open');
-}
-
-/**
- * 检测到新版本时弹出提示弹窗（标题「检测到更新」+ Markdown 更新日志）。
- *
- * 弹与不弹的判定：
- *   - 「跳过此次更新」记的是**版本号**：该版本不再弹，将来更新的版本照常弹；
- *   - 「取消」什么都不记：下一次检测到（定时任务的下一轮）还会再弹；
- *   - 人已经在设置页时不弹 —— 软件更新面板就在眼前，再盖一层弹窗纯属打扰
- *     （与 syncUpdateBadge 的取向一致）。
- */
-function maybeShowUpdateModal(info) {
-  const mask = $('update-modal');
-  if (!mask || !info || info.hasUpdate !== true) return;
-  const latest = String(info.latestVersion || '').trim();
-  if (!latest || wbApp.currentPage === 'settings') return;
-  let skipped = '';
-  try { skipped = localStorage.getItem(UPDATE_SKIP_KEY) || ''; } catch { /* 隐私模式等：当作没跳过 */ }
-  if (latest === skipped || latest === promptedUpdateVersion) return;
-  promptedUpdateVersion = latest;
-
-  $('update-modal-version').textContent = latest;
-  $('update-modal-current').textContent = info.currentVersion || '未知';
-  const notes = String(info.notes || '').trim();
-  $('update-modal-notes').innerHTML = notes
-    ? (window.wbMarkdown?.render?.(notes) || `<p>${esc(notes)}</p>`)
-    : '<p>这个版本没有填写发布说明。</p>';
-  mask.classList.add('open');
-}
-
-$('update-modal-go')?.addEventListener('click', () => {
-  closeUpdateModal();
-  showPage('settings');
-  // 更新面板在设置页的「关于」分类下；设置页自己会按 localStorage 恢复上次
-  // 手点过的分类（比如「数据」），所以跳过去之后要显式切到「关于」。
-  // 只切视图、不写偏好 —— 这是弹窗带来的深链，不该改用户手点的默认分类。
-  window.wbSettingsPanel?.showCategory?.('about');
-  // 跳到设置页后直接把下载跑起来，别让人再点一次「下载并安装」——
-  // 他点「去更新」的意图就是要更新，停在面板上等下一步是多余的。
-  // 用 lastUpdateInfo（弹窗自己那次 checkUpdate 的结果）而不是让面板重查：
-  // 省一次往返，也避免「弹窗说有新版、面板查到没有」的不一致。
-  void window.wbUpdatePanel?.openAndDownload?.(lastUpdateInfo);
-});
-$('update-modal-skip')?.addEventListener('click', () => {
-  try { localStorage.setItem(UPDATE_SKIP_KEY, promptedUpdateVersion); } catch { /* 忽略：下次照常弹 */ }
-  closeUpdateModal();
-});
-$('update-modal-cancel')?.addEventListener('click', closeUpdateModal);
-$('update-modal-close')?.addEventListener('click', closeUpdateModal);
-$('update-modal')?.addEventListener('click', event => {
-  if (event.target === $('update-modal')) closeUpdateModal();
-});
 
 // ─── 渲染：网关 / 模型 / 配置 ──────────────────
 

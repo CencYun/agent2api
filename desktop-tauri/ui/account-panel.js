@@ -148,7 +148,7 @@
     row.className = 'field-row';
     row.style.marginTop = '9px';
     row.innerHTML = `<label for="account-balance-token-input">余额查询凭证</label>`
-      + `<input id="account-balance-token-input" type="text" `
+      + `<input data-island-input id="account-balance-token-input" type="text" `
       + `placeholder="${configured ? '已配置，留空则不修改' : '一般不用填'}" `
       + `title="积分查询已复用转发用的登录凭证，这里通常留空即可。只有旧版本填过、或从旧代理导入过凭证时才有值">`
       // 清除是**显式动作**（保存时的空值一律理解为「不修改」，见 readBalanceTokenPatch）
@@ -228,12 +228,12 @@
       + `<p>这一栏改的是<strong>「${esc(provider.name || provider.id)}」本身</strong>（名下 ${count} 个账号共用）。`
       + `改协议 / Base URL 会改变它们的转发方式，正在进行的请求可能失败；模型清单与映射在「模型管理」页。</p>`
       + `<div class="field-row"><label for="account-provider-name">名称</label>`
-      + `<input id="account-provider-name" type="text" maxlength="${MAX_PROVIDER_NAME_CHARS}" `
+      + `<input data-island-input id="account-provider-name" type="text" maxlength="${MAX_PROVIDER_NAME_CHARS}" `
       + `value="${esc(provider.name || '')}" placeholder="提供商显示名，1~${MAX_PROVIDER_NAME_CHARS} 个字符"></div>`
       + `<div class="field-row" style="margin-top:9px"><label for="account-provider-protocol">协议</label>`
       + `<select id="account-provider-protocol" class="custom-provider-select">${options}</select></div>`
       + `<div class="field-row" style="margin-top:9px"><label for="account-provider-baseurl">Base URL</label>`
-      + `<input id="account-provider-baseurl" type="text" value="${esc(provider.baseUrl || '')}" `
+      + `<input data-island-input id="account-provider-baseurl" type="text" value="${esc(provider.baseUrl || '')}" `
       + `placeholder="OpenAI 兼容填到 /v1；Anthropic 填根地址"></div>`
       + `<div class="field-row" style="margin-top:12px">`
       + `<button type="button" class="danger" id="account-provider-remove" `

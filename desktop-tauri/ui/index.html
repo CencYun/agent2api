@@ -41,6 +41,12 @@
        （.models-table th.r / .acct-table td.cell-pick / .req-head .req-dur …），
        靠级联顺序取胜而不是堆特异性。与 select.css / tooltip.css 同一编排。 -->
   <link rel="stylesheet" href="css/table-col-settings.css">
+  <!-- 组件库产物（desktop-tauri/ui-kit/，由 ui-islands 构建时一并编译成 ui/islands/ui.css）：
+       Tailwind 的 theme + utilities 两层，刻意不含 preflight —— 基础重置仍由 tokens.css
+       承担，否则 h1-h6 字号、列表缩进、img 显示方式会被整体重置。
+       排在最后：工具类带 !important（原因见 ui-kit/styles/globals.css 顶部），
+       顺序其实已不影响结果，但保持「后加载的是更新的体系」这条阅读线索。 -->
+  <link rel="stylesheet" href="islands/ui.css">
 </head>
 <body>
   <div class="shell">
@@ -85,18 +91,10 @@
              两个独立事实；账号那行已按需求移除 —— 有没有账号、几个可用，
              账号页的筛选器与状态列本来就是权威出处。 -->
         <div class="sidebar-status" id="sidebar-status" title="本地网关监听状态">
-          <div class="status-line">
-            <span class="live" id="sidebar-status-dot"></span>
-            <span class="txt" id="sidebar-status-text">正在检查…</span>
-          </div>
-          <!-- 异常时的出口：只在出现端口冲突时露出（见 app.js）。
-               两个按钮的显隐条件不同：「结束占用进程」在端口被别的进程占着时给，
-               被系统保留时只给「更换端口」（那里没有进程可杀）。
-               常驻显示会让这个角落一直有按钮，而它绝大多数时候无事可做。 -->
-          <div class="status-actions" id="sidebar-status-actions" hidden>
-            <button class="sm" id="btn-end-occupant" hidden>结束占用进程</button>
-            <button class="sm" id="btn-change-port">更换端口</button>
-          </div>
+          <!-- 状态行与两个出口由 React 岛渲染（ui-islands/src/islands/port-panel.tsx）：
+               岛直接挂在这个 div 上（.sidebar-status 的子元素是 flex 布局，中间插一层
+               宿主会破坏排版），所以这里不再有静态子节点，class / id / title 保留。
+               对外仍是 window.wbPortPanel = { render, sync, portLabel, isReady }。 -->
         </div>
         <div class="theme-switch" id="theme-switch">
           <button data-mode="system">跟随系统</button>
@@ -336,83 +334,27 @@
           </section>
         </section>
 
-        <!-- ─── 模型管理（内部标识仍是 gateway：localStorage 记忆与 CSS 选择器都依赖它）─── -->
-        <section class="page" data-page="gateway">
-          <section class="panel">
-            <!-- 两栏：左栏是提供商导航（内置一组 + 自定义一组，由 models-panel.js
-                 的 renderRail 按运行期数据画），右栏是选中那家的模型表。左栏取代了
-                 原来顶部的「按提供商筛选」分段控件 —— 那排按钮只能筛内置各家，
-                 自定义家挤不进去，而模型管理本该是一个页面管全部提供商。 -->
-            <div class="mm">
-              <aside class="prov-rail" id="prov-rail" aria-label="按提供商选择"></aside>
-              <div class="mm-main">
-                <div class="panel-head">
-                  <!-- 这里曾经还有一行「标题 + N 个上游模型 · N 个开启的对外名称」：
-                       标题与顶栏面包屑重复，计数是看过一眼就不再读的数字，已按需求移除。
-                       「现在看的是哪一家」由左栏的选中态表达，「这家有多少模型」由左栏
-                       每项右边的数字表达 —— 都不必在表格上方再说一遍。
-                       状态筛选与搜索框住在这一个面板头里：它们与右边那排按钮同属
-                       「对这张表做什么」，各占一行会把表格区往下推一行的位置。
-                       搜索框紧跟在状态筛选右边（同为「看这张表」的控件），右侧那排
-                       按钮由 head-actions 自己的 margin-left:auto 推到最右。 -->
-                  <!-- 状态筛选与搜索框都由 React 岛渲染：选项 / 初值在 models-panel.js 里给 -->
-                  <div class="island" id="models-state-seg"></div>
-                  <div class="island" id="models-search"></div>
-                  <div class="head-actions">
-                    <!-- 「获取模型」排在最前：它是这一页的主操作（把清单拉回来），
-                         「添加模型」是补充。点开一个弹窗（本体在 models-fetch-modal.js）——
-                         自定义家是「拉上游 → 勾选 → 导入」，内置家是「刷新各家远程目录 +
-                         逐家结果」。文案与 title 由 models-panel.js 按当前选中项写入。
-                         这里曾有「＋ 添加映射」：它打开的是同一个弹窗、只是让用户自己
-                         再选一遍提供商与上游模型，而映射天然属于某一行 —— 行内的
-                         「＋ 映射」才是入口，那一颗已移除。 -->
-                    <button type="button" class="sm" id="btn-refresh-models">获取模型</button>
-                    <button type="button" class="sm" id="btn-add-custom-model">＋ 添加模型</button>
-                  </div>
-                </div>
-                <div class="models-table-wrap">
-                  <table class="models-table">
-                    <!-- data-col：列宽拖动（table-columns.js）靠它把 <col>、<th> 与列绑定，
-                         不依赖列序 —— 以后在中间插一列，存过的列宽不会错位 -->
-                    <colgroup><col class="c-model" data-col="model"><col class="c-rate" data-col="rate"><col class="c-source" data-col="source"><col class="c-alias" data-col="alias"><col class="c-act" data-col="act"></colgroup>
-                    <thead><tr>
-                      <th data-col="model">上游模型</th><th data-col="rate">倍率</th><th data-col="source">来源</th><th data-col="alias">模型映射（原始 ID 与别名独立开关）</th><th class="r" data-col="act">操作</th>
-                    </tr></thead>
-                    <tbody id="models"><tr><td colspan="5" class="empty">暂无模型</td></tr></tbody>
-                  </table>
-                </div>
-                <!-- 表尾说明：内容随选中的提供商换（内置家 / 自定义家两种口径），
-                     由 models-panel.js 的 paintViewChrome 写 -->
-                <div class="panel-foot" id="models-panel-foot">
-                  <span>「默认」绑定就是原始模型 ID，只可开关、不可删除。原始 ID 与每个别名独立生效：关闭的名称不出现在 <code>/v1/models</code>，下游请求返回 404；其他开启的名称不受影响。</span>
-                </div>
-              </div>
-            </div>
-          </section>
-        </section>
+        <!-- ─── 模型管理（内部标识仍是 gateway：localStorage 记忆与 CSS 选择器都依赖它）───
+             整页由 React 岛渲染（desktop-tauri/ui-islands/src/islands/models-page.tsx，
+             随 islands/ui.js 一起加载）。岛直接挂在这个 section 上、不套宿主 div ——
+             页面 CSS 用 .page 的直接子选择器（.panel 是它的直接子元素），中间插一层
+             会破坏 .panel 的布局。对外仍是 window.wbModelsPanel 与 window.wbModelsCustom。
+             这一页的**页面骨架类名照旧**（.panel / .panel-head / .mm / .prov-rail /
+             .models-table-wrap / .models-table / .panel-foot …），换掉的只是里面的控件。
+             表骨架（colgroup + thead 的 th[data-col]）也由岛渲染，但顺序与这里原先
+             写死的完全一致，列显隐 / 顺序仍由 wbColSettings.syncStaticHead 就地重排。 -->
+        <section class="page" data-page="gateway"></section>
 
-        <!-- ─── 网关 Key ─── -->
-        <section class="page" data-page="keys">
-          <section class="panel">
-            <div class="panel-head">
-              <h2>API Key 列表</h2>
-              <span class="badge" id="keys-status">未启用鉴权</span>
-              <div class="head-actions">
-                <button type="button" class="sm primary" id="btn-add-key">＋ 新建 Key</button>
-              </div>
-            </div>
-            <div class="models-table-wrap">
-              <table class="models-table keys-table">
-                <colgroup><col class="k-name" data-col="name"><col class="k-key" data-col="key"><col class="k-time" data-col="time"><col class="k-state" data-col="state"><col class="k-act" data-col="act"></colgroup>
-                <thead><tr><th data-col="name">名称</th><th data-col="key">Key</th><th data-col="time">创建时间</th><th data-col="state">启用</th><th class="r" data-col="act">操作</th></tr></thead>
-                <tbody id="keys-list"><tr><td colspan="5" class="empty">还没有 Key</td></tr></tbody>
-              </table>
-            </div>
-            <div class="panel-foot">
-              <span>客户端请求需带 <code>Authorization: Bearer &lt;key&gt;</code> 或 <code>x-api-key: &lt;key&gt;</code>；修改后立即生效，本程序自身会自动使用第一把启用的 Key。每把 Key 可单独限制<b>可用提供商</b>与<b>可用模型</b>（行内「可用范围」）：留空 = 不限制，两个都设时按交集生效 —— 被限制的模型对这把 Key 表现为「不存在」（拉 /v1/models 也看不到它），提供它的家不在可用列表里时请求同样被拒。</span>
-            </div>
-          </section>
-        </section>
+        <!-- ─── 网关 Key ───
+             整页由 React 岛渲染（desktop-tauri/ui-islands/src/islands/keys-page.tsx，
+             随 islands/ui.js 一起加载）。岛直接挂在这个 section 上、不套宿主 div ——
+             页面 CSS 用 .page 的直接子选择器（.panel 是它的直接子元素），中间插一层
+             会破坏 .panel 的布局。对外仍是 window.wbKeysPanel = { load, render,
+             visibleColumns }。
+             表骨架（table.models-table.keys-table 与 th/col[data-col]）由岛渲染，
+             顺序与原先写死的完全一致，列显隐 / 顺序仍由 wbColSettings.syncStaticHead
+             就地重排。 -->
+        <section class="page" data-page="keys"></section>
 
         <!-- ─── 文档 ───
              R8：「把网关 Key 的接口地址这一段直接搬到文档页面去」。
@@ -504,52 +446,15 @@
              原先页头的「自动刷新」开关已迁到「定时任务」页：它改的是本页轮询的
              间隔，与那几个后台任务同属「定时」这一类，收在一处才好对照调整。 -->
         <section class="page" data-page="logs">
-          <!-- ── 视图一：系统事件 ── -->
-          <section class="panel" id="logs-panel-events">
-            <div class="panel-head">
-              <h2>系统事件</h2>
-              <span id="logs-badge" class="badge">—</span>
-              <div class="head-actions">
-                <button id="btn-logs-export">导出</button>
-                <button id="btn-logs-clear" class="danger">清空</button>
-              </div>
-            </div>
-
-            <div class="panel-body">
-              <div class="log-filters">
-                <!-- 时间档位与报表页 #report-range 一致，默认「全部」= 不加时间条件（与加筛选之前的行为相同） -->
-                <!-- 时间档位由 React 岛渲染：选项在 logs-panel.js 里给
-                     （与报表页 #report-range 同一套档位，但默认值不同、各存各的） -->
-                <div class="island" id="logs-range"></div>
-                <select id="logs-level" title="按最低级别筛选">
-                  <option value="">全部级别</option>
-                  <option value="debug">debug 及以上</option>
-                  <option value="info">info 及以上</option>
-                  <option value="warn">warn 及以上</option>
-                  <option value="error">仅 error</option>
-                </select>
-                <select id="logs-category" title="按分类筛选">
-                  <option value="">全部分类</option>
-                </select>
-                <input type="search" id="logs-keyword" placeholder="搜索消息关键词…" autocomplete="off">
-              </div>
-
-              <div class="log-list" id="log-list"><div class="log-empty">正在加载日志…</div></div>
-            </div>
-
-            <div class="panel-foot">
-              <span>日志保存在 <code id="logs-file">~/.agent2api/logs.jsonl</code>，保留最近 500 条，重启后仍可查询。</span>
-              <span>429 自动切换会带上「原账号 → 目标账号」</span>
-              <div class="spacer"></div>
-              <!-- 分页：页脚右侧，与面板头部的操作按钮同侧 -->
-              <div class="log-pager">
-                <button id="btn-logs-prev" class="sm" disabled>上一页</button>
-                <button id="btn-logs-next" class="sm" disabled>下一页</button>
-                <span id="logs-page-info" class="log-pager-info">第 1 / 1 页</span>
-              </div>
-            </div>
-          </section>
-
+          <!-- 整页由 React 岛渲染（ui-islands/src/islands/logs-panel.tsx，随 islands/ui.js
+               一起加载）。岛直接挂在这个 section 上、不套宿主 div —— 页面 CSS 用 .page 的
+               直接子选择器（.panel 是它的直接子元素），中间插一层会破坏 .panel 的布局。
+               对外仍是 window.wbLogsPanel = { load, render, lastStats, applyAutoRefresh,
+               showCategory }。
+               这一页的**页面骨架类名照旧**（.panel / .log-filters / .log-list / .log-pager …），
+               换掉的只是里面的控件：button → Button、.badge → Badge、原生 select → Select 一族、
+               搜索框 → InputGroup、时间档位 → SegmentedControl（旧实现在下面的 #logs-range
+               挂载点上调 wbSegmented.mount，那个挂载点随本次迁移一起消失）。 -->
         </section>
 
         <!-- ─── 定时任务 ───
@@ -563,25 +468,12 @@
              自动签到与凭证自动维护整行铺开，其余六条分两栏各三条 —— 左栏是后端
              任务（带「立即执行」），右栏是页面自动刷新（执行者是页面自己）。 -->
         <section class="page" data-page="tasks">
-          <section class="panel">
-            <div class="panel-head">
-              <h2>任务清单</h2>
-              <span id="tasks-badge" class="badge">—</span>
-              <span class="panel-sub">状态每 20 秒自动同步</span>
-              <div class="head-actions">
-                <button id="btn-tasks-refresh">刷新</button>
-              </div>
-            </div>
-            <div class="panel-body">
-              <div class="task-list" id="task-list">
-                <div class="log-empty">正在加载定时任务…</div>
-              </div>
-            </div>
-            <div class="panel-foot">
-              <span>任务配置保存在 <code>~/.agent2api/config.json</code> 的 <code>scheduledTasks</code> 字段</span>
-              <span>改动立即生效，不需要重启程序</span>
-            </div>
-          </section>
+          <!-- 整页由 React 岛渲染（ui-islands/src/islands/tasks-panel.tsx，随
+               islands/ui.js 一起加载）。岛直接挂在这个 section 上、不套宿主 div ——
+               页面 CSS 用 .page 的直接子选择器（.panel 是它的直接子元素），中间插一层
+               会破坏 .panel 的布局。对外仍是 window.wbTasksPanel.load()。
+               这一页的**页面骨架类名照旧**（.panel / .panel-head / .task-grid …），
+               换掉的只是里面的控件（button → Button、.badge → Badge、开关 → Switch…）。 -->
         </section>
 
         <!-- ─── 请求日志 ───
@@ -590,72 +482,20 @@
              用时 / 用量 / 错误 / 详情。后端 /api/stats/requests 只支持时间区间、状态与
              模型名精确匹配，分页是 offset 真分页，条数没有前端上限。
              「重试」一列同时承载重试链与敏感词命中两枚标签（各自带悬停面板，
-             敏感词那枚只写一个「敏」字，理由见 requests-panel.js 的 retryCell）。
+             敏感词那枚只写一个「敏」字，理由见 requests-page.tsx 的 retryCell）。
              这一页是**逐请求事实的唯一去处**：换号链、每轮内部的退避重试（含原因
              与等待时长）、上游报错原文、代理回退提示、敏感词命中词表都在悬停面板里；
              调试模式开启时，「详情」列还能看到发给上游与上游返回的完整原始报文 ——
-             敏感词场景下排查提示词要看的就是那一份（运行日志页不再有这些逐请求的行）。 -->
-        <section class="page" data-page="requests">
-          <section class="panel">
-            <div class="panel-head">
-              <h2>请求日志列表</h2>
-              <span id="req-badge" class="badge">—</span>
-              <span class="panel-sub">按时间倒序，保留期在设置页可调</span>
-              <div class="head-actions">
-                <!-- 打开的是清理弹窗（request-clear-modal.js）：全部删除 / 仅清空报文原文
-                     两种方式 + 预览统计 + 压缩数据库入口，都在弹窗里选 -->
-                <button id="btn-req-clear" class="danger">清理</button>
-              </div>
-            </div>
+             敏感词场景下排查提示词要看的就是那一份（运行日志页不再有这些逐请求的行）。
 
-            <div class="panel-body">
-              <div class="log-filters">
-                <!-- 时间档位与日志页同一组档位；持久化键沿用拆分前的
-                     workbuddy-desktop-logs-requests-range，用户已选的档位不因拆页丢失 -->
-                <!-- 时间档位由 React 岛渲染：选项在 requests-panel.js 里给 -->
-                <div class="island" id="req-range"></div>
-                <select id="req-status" title="按请求结果筛选">
-                  <option value="">全部状态</option>
-                  <option value="ok">成功</option>
-                  <option value="error">失败</option>
-                </select>
-                <!-- 提供商 / 模型两个维度：选项由 requests-panel.js 进页面时从
-                     `/api/stats/requests/filters` 拉一次填进来（那是「明细里出现过
-                     的值」，不是当前配置清单 —— 已删除账号所属的提供商、历史请求
-                     用过的模型名同样要能筛到）。这里只声明「全部」这个空值项。 -->
-                <select id="req-provider" title="按提供商筛选（只列日志里出现过的）">
-                  <option value="">全部提供商</option>
-                </select>
-                <select id="req-model" title="按模型筛选（只列日志里出现过的；精确匹配模型名）">
-                  <option value="">全部模型</option>
-                </select>
-                <!-- 仅看进行中：单颗分段开关（复用时间档位同一套 .seg 形制）。
-                     开启时 status 过滤固定发 running，与提供商 / 模型 / 时间并存，
-                     状态下拉随即停用（同一维度的互斥取值，见 requests-panel.js）；
-                     「全部删除 / 仅清空报文原文」两种删除方式在「清理」弹窗里选。 -->
-                <div class="seg">
-                  <button type="button" class="seg-item" id="btn-req-running" aria-pressed="false"
-                    title="只显示正在转发中的请求（状态列按阶段显示：连接中 / 等待响应 / 响应中 / 重试中，用时列显示已用时）">仅看进行中</button>
-                </div>
-                <div class="spacer"></div>
-                <span class="panel-sub" id="req-summary">—</span>
-              </div>
-
-              <div class="log-list" id="req-list"><div class="log-empty">正在加载请求日志…</div></div>
-            </div>
-
-            <div class="panel-foot">
-              <span>上报的是网关报文里的模型名，别名 / 映射后的名字按上游收到的那次记录</span>
-              <span>账号为空表示请求在选定账号之前就失败了</span>
-              <div class="spacer"></div>
-              <div class="log-pager">
-                <button id="btn-req-prev" class="sm" disabled>上一页</button>
-                <button id="btn-req-next" class="sm" disabled>下一页</button>
-                <span id="req-page-info" class="log-pager-info">第 1 / 1 页</span>
-              </div>
-            </div>
-          </section>
-        </section>
+             整页由 React 岛渲染（desktop-tauri/ui-islands/src/islands/requests-page.tsx，
+             随 islands/ui.js 一起加载）。岛直接挂在这个 section 上、不套宿主 div ——
+             页面 CSS 用 .page 的直接子选择器（.panel 是它的直接子元素），中间插一层
+             会破坏 .panel 的布局。对外仍是 window.wbRequestsPanel = { load,
+             applyAutoRefresh, visibleColumns, clearParams, notifyCleared }。
+             这一页的**页面骨架类名照旧**（.panel / .panel-head / .log-filters /
+             .log-list / .panel-foot / .log-pager …），换掉的只是里面的控件。 -->
+        <section class="page" data-page="requests"></section>
 
         <!-- ─── 设置 ─── -->
         <section class="page" data-page="settings">
@@ -742,7 +582,7 @@
                       <div class="retention-row">
                         <label for="settings-timeout-connect">连接中超时</label>
                         <span class="retention-input">
-                          <input type="number" id="settings-timeout-connect" min="1" max="3600" step="1" inputmode="numeric">
+                          <input data-island-input type="number" id="settings-timeout-connect" min="1" max="3600" step="1" inputmode="numeric">
                           <span class="unit">秒</span>
                         </span>
                         <div class="hint">建立上游 TCP/TLS 连接或代理隧道的最大等待时间（秒），默认 30 秒，范围 1~3600。</div>
@@ -750,7 +590,7 @@
                       <div class="retention-row">
                         <label for="settings-timeout-headers">等待响应超时</label>
                         <span class="retention-input">
-                          <input type="number" id="settings-timeout-headers" min="1" max="3600" step="1" inputmode="numeric">
+                          <input data-island-input type="number" id="settings-timeout-headers" min="1" max="3600" step="1" inputmode="numeric">
                           <span class="unit">秒</span>
                         </span>
                         <div class="hint">请求发出后等待上游响应头的最大时间（秒），默认 300 秒，范围 1~3600。</div>
@@ -758,7 +598,7 @@
                       <div class="retention-row">
                         <label for="settings-timeout-stream-idle">流式响应空闲超时</label>
                         <span class="retention-input">
-                          <input type="number" id="settings-timeout-stream-idle" min="1" max="3600" step="1" inputmode="numeric">
+                          <input data-island-input type="number" id="settings-timeout-stream-idle" min="1" max="3600" step="1" inputmode="numeric">
                           <span class="unit">秒</span>
                         </span>
                         <div class="hint">流式响应相邻数据之间允许的最大空闲时间（秒），收到新数据后重新计时，默认 300 秒，范围 1~3600。</div>
@@ -766,7 +606,7 @@
                       <div class="retention-row">
                         <label for="settings-timeout-body">非流式响应超时</label>
                         <span class="retention-input">
-                          <input type="number" id="settings-timeout-body" min="1" max="3600" step="1" inputmode="numeric">
+                          <input data-island-input type="number" id="settings-timeout-body" min="1" max="3600" step="1" inputmode="numeric">
                           <span class="unit">秒</span>
                         </span>
                         <div class="hint">读取完整非流式响应体允许的最大时间（秒），默认 300 秒，范围 1~3600。</div>
@@ -796,7 +636,7 @@
                       <div class="retention-row">
                         <label for="settings-retry-count">同一账号重试次数</label>
                         <span class="retention-input">
-                          <input type="number" id="settings-retry-count" min="0" max="10" step="1" inputmode="numeric">
+                          <input data-island-input type="number" id="settings-retry-count" min="0" max="10" step="1" inputmode="numeric">
                           <span class="unit">次</span>
                         </span>
                         <div class="hint">在同一个账号上原地重发几次（不含首发；整条请求共用一份，用完后换来的账号只发一次就继续换）。可填 0–10，0 表示失败立即换号。</div>
@@ -804,7 +644,7 @@
                       <div class="retention-row">
                         <label for="settings-retry-cross-provider-count">切换账号重试次数</label>
                         <span class="retention-input">
-                          <input type="number" id="settings-retry-cross-provider-count" min="0" max="10" step="1" inputmode="numeric">
+                          <input data-island-input type="number" id="settings-retry-cross-provider-count" min="0" max="10" step="1" inputmode="numeric">
                           <span class="unit">次</span>
                         </span>
                         <div class="hint">失败后最多再换几个账号试（填 N = 最多换 N 个，首发那个不算）。换到同一家名下另一个账号、或换到另一家，都各算一次；换满仍失败就返回错误。可填 0–10，0 表示失败立即报错。</div>
@@ -812,7 +652,7 @@
                       <div class="retention-row">
                         <label for="settings-retry-interval">重试间隔</label>
                         <span class="retention-input">
-                          <input type="number" id="settings-retry-interval" min="0" max="300" step="1" inputmode="numeric">
+                          <input data-island-input type="number" id="settings-retry-interval" min="0" max="300" step="1" inputmode="numeric">
                           <span class="unit">秒</span>
                         </span>
                         <div class="hint">两次重试之间的等待时间，两项共用，可填 0–300 秒。</div>
@@ -894,7 +734,7 @@
                       <div class="retention-row">
                         <label for="settings-prompt-file">提示词文件</label>
                         <span class="prompt-input">
-                          <input type="text" id="settings-prompt-file" placeholder="留空 = 用内置默认提示词">
+                          <input data-island-input type="text" id="settings-prompt-file" placeholder="留空 = 用内置默认提示词">
                         </span>
                         <div class="hint">UTF-8 文本文件路径，留空用内置默认提示词（通用编码助手提示词，不含任何会被上游拦截的模板句）。只在「替换 / 追加」模式下生效，透传模式不读它。</div>
                       </div>
@@ -1010,7 +850,7 @@
                       <div class="retention-row">
                         <label for="settings-retention-log">事件日志保留天数</label>
                         <span class="retention-input">
-                          <input type="number" id="settings-retention-log" min="1" max="3650" step="1" inputmode="numeric">
+                          <input data-island-input type="number" id="settings-retention-log" min="1" max="3650" step="1" inputmode="numeric">
                           <span class="unit">天</span>
                         </span>
                         <div class="hint">登录 / 账号切换 / 429 切换等系统事件，可填 1–3650 天。</div>
@@ -1018,7 +858,7 @@
                       <div class="retention-row">
                         <label for="settings-retention-request">请求日志保留天数</label>
                         <span class="retention-input">
-                          <input type="number" id="settings-retention-request" min="1" max="3650" step="1" inputmode="numeric">
+                          <input data-island-input type="number" id="settings-retention-request" min="1" max="3650" step="1" inputmode="numeric">
                           <span class="unit">天</span>
                         </span>
                         <div class="hint">「请求日志」页的逐条请求记录，可填 1–3650 天。</div>
@@ -1026,7 +866,7 @@
                       <div class="retention-row">
                         <label for="settings-retention-daily">按天聚合保留天数</label>
                         <span class="retention-input">
-                          <input type="number" id="settings-retention-daily" min="1" max="3650" step="1" inputmode="numeric">
+                          <input data-island-input type="number" id="settings-retention-daily" min="1" max="3650" step="1" inputmode="numeric">
                           <span class="unit">天</span>
                         </span>
                         <div class="hint">报表页的热力图与按天趋势，可填 1–3650 天。</div>
@@ -1084,52 +924,11 @@
                    自动签到已迁到「定时任务」页（它与那几个间隔型任务同属
                    「到点自动干活」这一类，放在设置页的「关于」分类下语义不对）。 -->
               <div class="settings-pane" data-cat="about">
-                <section class="panel">
-                  <div class="panel-head">
-                    <h2>软件更新</h2>
-                    <span class="tip-q" data-tip="更新包从 GitHub 发布页下载，下载完成后可直接启动安装程序并自动重启本程序。安装包会先校验来源域名与文件完整性；访问 GitHub 较慢时，会自动尝试通过 Clash Verge 的混合端口重试一次。"></span>
-                    <span id="update-badge" class="badge">未检查</span>
-                    <div class="head-actions">
-                      <button id="btn-update-check">检查更新</button>
-                      <button id="btn-update-download" class="primary" style="display:none">下载并安装</button>
-                    </div>
-                  </div>
-                  <div class="panel-body">
-                    <!-- 当前版本 → 最新版本两个读数同一行，窗口放不下时靠
-                         .update-version 的 wrap 自然换行 -->
-                    <div class="update-version">
-                      <span class="version-pill">
-                        <span class="k">当前版本</span><span class="v" id="update-current">—</span>
-                      </span>
-                      <span class="version-arrow">→</span>
-                      <span class="version-pill new">
-                        <span class="k">最新版本</span><span class="v" id="update-latest">—</span>
-                      </span>
-                    </div>
-
-                    <div class="detail" id="update-state">点击「检查更新」查询最新发布版本。</div>
-                    <div class="progress" id="update-progress" hidden><div class="bar"></div></div>
-
-                    <!-- 关于作者 + 收藏项目：作者主页与仓库地址都从接口返回的 repository 现拼
-                         （fork 后自动指向 fork 者，代码里不写死任何账号），拿到数据前整行隐藏 -->
-                    <div class="update-author" id="update-author" hidden>
-                      <div class="update-author-text"><strong>关于作者</strong><span>本工具由 <a id="update-author-link" target="_blank" rel="noopener">项目作者</a> 个人开发并开源维护，免费使用、不带广告，也不会收集你的账号数据。如果它帮到了你，欢迎到项目仓库点个 Star 支持一下。</span></div>
-                      <div class="update-author-actions">
-                        <button type="button" class="sm" id="btn-update-favorite" title="在浏览器中打开项目仓库，点 Star 支持作者">收藏项目</button>
-                      </div>
-                    </div>
-
-                    <!-- 更新日志：只展示最新一次发布的说明，数据来自「检查更新」的结果
-                         （与上方「最新版本」同源，见 update-panel.js 的 renderChangelog） -->
-                    <div class="update-log" id="update-notes">
-                      <div class="update-log-head">
-                        <span class="update-log-title">更新日志</span>
-                        <span class="update-log-meta" id="update-log-meta"></span>
-                      </div>
-                      <div class="update-log-body" id="update-log-body"></div>
-                    </div>
-                  </div>
-                </section>
+                <!-- 软件更新面板由 React 岛渲染（ui-islands/src/islands/update-panel.tsx）：
+                     岛直接挂在这个 pane 上（显隐由 settings-panel.js 在它自己身上切 class，
+                     子节点归岛；中间插一层会多出一层盒子、破坏 .panel 的布局）。
+                     对外仍是 window.wbUpdatePanel = { load, check, syncFromCache, openAndDownload }，
+                     另有 showUpdateModal(info) 供 app.js 的定时检查转发（弹与不弹的判定在岛内）。 -->
               </div>
             </div>
           </div>
@@ -1203,7 +1002,7 @@
           <p>优先级是转发顺序，数值越小越先用。<strong>每个账号的优先级必须唯一</strong>——多个账号并列时「谁先用」会失去意义，因此保存时会拒绝已被占用的数值。调整顺序也可以直接在账号列表里用「↑ / ↓」与相邻账号交换。</p>
           <div class="field-row">
             <label for="account-priority-input">优先级</label>
-            <input id="account-priority-input" type="number" min="0" max="9999" step="1">
+            <input data-island-input id="account-priority-input" type="number" min="0" max="9999" step="1">
             <span class="detail" id="priority-usage"></span>
           </div>
           <div class="field-row" style="margin-top:9px">
@@ -1215,7 +1014,7 @@
           </div>
           <div class="field-row" style="margin-top:9px">
             <label for="account-name-input">备注名</label>
-            <input id="account-name-input" type="text" maxlength="100" placeholder="账号显示名称">
+            <input data-island-input id="account-name-input" type="text" maxlength="100" placeholder="账号显示名称">
           </div>
         </div>
 
@@ -1302,28 +1101,13 @@
 
   <div id="toast" role="status" aria-live="polite"></div>
 
-  <!-- ─── 通用确认弹窗（confirm-dialog.js 驱动）───
+  <!-- ─── 通用确认弹窗 ───
        替代原生 confirm()：Tauri 的 WebView 里原生 confirm 不弹窗直接放行，
        危险操作（清空 / 删除）必须走这个。确认键样式与文案由调用方给，
-       危险操作传 okClass="danger"；Promise 化，用法与 confirm() 同构。 -->
-  <div id="confirm-modal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title">
-    <div class="modal modal-confirm">
-      <div class="modal-head">
-        <h2 id="confirm-modal-title">确认操作</h2>
-        <button id="confirm-modal-close" title="关闭">✕</button>
-      </div>
-
-      <div class="modal-body">
-        <div class="danger-zone" id="confirm-modal-text">—</div>
-      </div>
-
-      <div class="modal-foot">
-        <div class="spacer"></div>
-        <button id="confirm-modal-cancel">取消</button>
-        <button id="confirm-modal-ok" class="primary">确定</button>
-      </div>
-    </div>
-  </div>
+       危险操作传 okClass="danger"；Promise 化，用法与 confirm() 同构。
+       已迁到组件库：实现见 ui-islands/src/islands/confirm-dialog.tsx，随
+       islands/ui.js 一起加载，对外仍是 window.wbConfirm.ask(options)，
+       13 处调用点一行都不用改 —— 所以这里不再有常驻 DOM（弹窗按需建、关即卸）。 -->
 
   <!-- ─── 数据结构升级（旧 JSON/JSONL → 单个 SQLite 库）───
        本次更新把存储换成了单个 SQLite 数据库。改造后**没有弹窗**：
@@ -1333,281 +1117,46 @@
        旧数据只改名为 *.migrated 备份、**绝不删除**；过程与结果都由 toast 告知
        （用户没点过任何东西，程序在搬数据时必须让他知道文件还在）。 -->
 
-  <!-- ─── 请求详情弹窗（requests-panel.js）───
+  <!-- ─── 请求详情弹窗 ───
        三个标签：请求详情（列表行数据的完整展开）、预览对话（下游原文
        /api/stats/requests/raw 解析出的对话气泡）、原始报文（调试模式保存的
        上游原始报文：请求头（凭据类已脱敏）/ 请求体 / 响应头 / 响应体四块，
        调试模式没开时整个标签隐藏）。报文由 /api/debug/traffic?id= 按需拉取
        （列表接口不带报文，见后端 debug_api 的模块头）；三个标签的数据在
-       打开时并行拉取，切换不发请求。 -->
-  <div id="req-detail-modal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="req-detail-title">
-    <div class="modal modal-wide">
-      <div class="modal-head">
-        <h2 id="req-detail-title">请求详情</h2>
-        <button id="req-detail-close" title="关闭">✕</button>
-      </div>
-      <div class="modal-body" id="req-detail-body">正在读取…</div>
-      <div class="modal-foot">
-        <span class="hint" id="req-detail-hint">—</span>
-        <div class="spacer"></div>
-        <!-- 手动终止（仅进行中的行显示；request-detail.js 按 isRunning 切换
-             hidden —— CSS 里有配套的 [hidden] 规则，见 page-requests.css） -->
-        <button id="req-detail-terminate" class="danger" hidden>终止请求</button>
-        <button id="req-detail-cancel">关闭</button>
-      </div>
-    </div>
-  </div>
+       打开时并行拉取，切换不发请求。
+       已迁到组件库：实现见 ui-islands/src/islands/request-detail.tsx，随
+       islands/ui.js 一起加载，对外仍是 window.wbRequestDetail.open(id, row) /
+       .close()，所以这里不再有常驻 DOM（弹窗按需建、关即卸）。 -->
 
-  <!-- ─── 添加模型映射弹窗（models-panel.js）─── -->
-  <!-- 检测到更新弹窗：定时版本检查发现新版本时弹出。
-       「跳过此次更新」按版本号记在 localStorage；「取消」只是关掉，
-       下一次检测到（定时任务下一轮）还会再弹。 -->
-  <div id="update-modal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="update-modal-title">
-    <div class="modal">
-      <div class="modal-head">
-        <h2 id="update-modal-title">检测到更新</h2>
-        <button id="update-modal-close" title="关闭">✕</button>
-      </div>
-      <div class="modal-body">
-        <p class="update-modal-intro">
-          新版本 <b id="update-modal-version">—</b> 已发布（当前
-          <span id="update-modal-current">—</span>），更新日志如下：
-        </p>
-        <div class="update-modal-notes md-body" id="update-modal-notes"></div>
-      </div>
-      <div class="modal-foot">
-        <button id="update-modal-skip">跳过此次更新</button>
-        <div class="spacer"></div>
-        <button id="update-modal-cancel">取消</button>
-        <button id="update-modal-go" class="primary">去更新</button>
-      </div>
-    </div>
-  </div>
+  <!-- 「检测到更新」弹窗已迁到组件库：实现见
+       desktop-tauri/ui-islands/src/islands/update-panel.tsx，随 islands/ui.js
+       一起加载；由 app.js 的定时检查经 wbUpdatePanel.showUpdateModal(info) 触发，
+       点击时建、关闭即卸，所以这里不再有常驻 DOM。 -->
 
-  <!-- 更换端口弹窗：端口冲突（被占用 / 被系统保留）时的出口之一。
-       只在侧栏那两个按钮点开时显示，不常驻。 -->
-  <div id="port-modal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="port-modal-title">
-    <div class="modal">
-      <div class="modal-head">
-        <h2 id="port-modal-title">更换网关端口</h2>
-        <button id="port-modal-close" title="关闭">✕</button>
-      </div>
-      <div class="modal-body">
-        <div class="modal-section">
-          <h3>当前状态</h3>
-          <p id="port-modal-status" class="detail"></p>
-        </div>
+  <!-- 更换端口弹窗已迁到组件库：实现见
+       desktop-tauri/ui-islands/src/islands/port-panel.tsx，随 islands/ui.js
+       一起加载；点击时建、关闭即卸，所以这里不再有常驻 DOM。
+       注意：它此前占用的是 #port-modal 一族 id，现在由 React 自建。 -->
 
-        <div class="modal-section">
-          <h3>新端口</h3>
-          <div class="field-row">
-            <label for="port-input">端口号</label>
-            <input id="port-input" type="number" min="1024" max="65535" step="1"
-                   placeholder="例如 3066" autocomplete="off">
-          </div>
-          <div id="port-hint" class="detail"></div>
-          <div class="detail" style="margin-top:8px">
-            端口需在 1024-65535 之间。1023 及以下是系统保留范围，普通程序无法监听。
-          </div>
-        </div>
+  <!-- 添加模型映射弹窗已迁到组件库：实现见
+       desktop-tauri/ui-islands/src/islands/models-page.tsx（组件库 Dialog 一族），
+       点击时建、关闭即卸，所以这里不再有常驻 DOM。 -->
 
-        <div class="modal-section">
-          <h3>换端口后要改的地方</h3>
-          <p class="detail">
-            网关地址会变成 <code id="port-new-base">http://127.0.0.1:—</code>。
-            已经把这个地址填进其它工具（Claude Code、Cherry Studio 等）的，
-            需要一并改成新地址，否则那些工具会连不上。
-          </p>
-        </div>
+  <!-- 添加自定义模型弹窗已迁到组件库：实现见
+       desktop-tauri/ui-islands/src/islands/models-page.tsx（组件库 Dialog 一族），
+       点击时建、关闭即卸，所以这里不再有常驻 DOM。 -->
 
-        <div class="detail" id="port-modal-message" style="min-height:18px"></div>
-      </div>
-      <div class="modal-foot">
-        <button id="port-modal-cancel">取消</button>
-        <button id="port-modal-save" class="primary">保存并重启</button>
-      </div>
-    </div>
-  </div>
-
-  <div id="mapping-modal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="mapping-modal-title">
-    <div class="modal">
-      <div class="modal-head">
-        <h2 id="mapping-modal-title">添加模型映射</h2>
-        <button id="mapping-modal-close" title="关闭">✕</button>
-      </div>
-      <div class="modal-body">
-        <div class="modal-section">
-          <div class="mapping-row mapping-row-single">
-            <div class="mapping-col">
-              <label for="mapping-provider">提供商</label>
-              <select id="mapping-provider"></select>
-            </div>
-          </div>
-          <div class="mapping-row" style="margin-top:10px">
-            <div class="mapping-col">
-              <label for="mapping-alias">对外映射名（下游请求时用）</label>
-              <input id="mapping-alias" type="text" maxlength="128" placeholder="例如 gpt-4o" autocomplete="off">
-            </div>
-            <div class="mapping-arrow">→</div>
-            <div class="mapping-col">
-              <label for="mapping-upstream">转发到上游模型</label>
-              <!-- 只能是这一家清单里的模型（下拉）。这里曾经还有一个「手动输入
-                   上游模型 ID」的开关，已删除：映射的对外名只有在**目标模型已被
-                   广告**时才会跟着进广告视图（catalog::models_response 遍历已
-                   广告的模型再补别名），而入口校验以广告视图为准 —— 手输一个
-                   清单里没有的名字，映射建了也永远调不通，白白让用户以为配好了。
-                   要用清单外的模型，正确做法是让那家的清单收录它 —— 现在有了
-                   正规入口：面板顶部的「＋ 添加自定义模型」（登记后该模型真的
-                   进入该家清单，于是这里就能在下拉里选到它），而不是在映射里
-                   绕过清单。 -->
-              <select id="mapping-upstream"></select>
-            </div>
-          </div>
-          <div class="mapping-preview" id="mapping-preview"></div>
-          <!-- 思考等级（照抄 OmniProxy 模型管理的手动绑定形态）：
-               选项 = 「不覆盖」（空值）+ 通用等级表（值由后端的 manage_view
-               下发 `reasoningLevels`，前端不自己抄一份，免得两处漂移）
-               + 末尾一个「自定义等级」入口。选到自定义那一项时下面的输入框
-               才露出来：表外的值也可能有意义（各家上游的档位拼法不同），
-               但平时藏着，免得每次建映射都要判断「这里要不要填」。
-               注意：这个绑定会真的注入转发（跟着它所在的这条映射走），
-               但「哪些情况不注入」有几条明确规则 —— 相邻的问号说明了要点。 -->
-          <div class="mapping-row mapping-row-single" style="margin-top:10px">
-            <div class="mapping-col">
-              <label for="mapping-reasoning">思考等级</label>
-              <div class="reasoning-pick">
-                <select id="mapping-reasoning"></select>
-                <span class="tip-q" data-tip="绑定在「对外名 → 上游模型」这一条映射上的思考等级（列表照抄 OmniProxy 的手动绑定），选「不覆盖」表示不给这条映射指定等级。它会跟着这条映射注入转发，由承载的那家翻译成自己的档位字段（CatPaw 归并成 low/high/max，Qoder 按模型声明的档位归一）。以下几种情况故意不注入：① off / none（关闭思考）—— 本项目没有安全的表达方式；② 表外的自定义等级（各家能力范围不同，无法判断上游收不收）；③ 客户端请求体里已经自己指定了档位（那是更明确的意图，绑定不覆盖）；④ 这家上游不认识档位字段（如 WorkBuddy / 小浣熊 / AutoClaw / Cline）。注入与跳过都会写进详细日志。"></span>
-              </div>
-              <input id="mapping-reasoning-custom" type="text" maxlength="32"
-                     placeholder="自定义等级（例如 custom-high）" autocomplete="off" hidden>
-            </div>
-          </div>
-          <p class="detail">
-            对外名可自由命名，允许与上游模型 ID 同名（同名时该上游的原生路由优先，映射作兜底）；
-            支持字母、数字与 <code>- _ . / :</code>。同一对外名可在多个提供商各添加一条：
-            下游用同一个名字请求，网关按账号优先级主备切换，失败自动落到下一个提供商。
-          </p>
-        </div>
-        <div class="detail" id="mapping-modal-status" style="min-height:18px"></div>
-      </div>
-      <div class="modal-foot">
-        <div class="spacer"></div>
-        <button id="mapping-modal-cancel">取消</button>
-        <button id="mapping-modal-save" class="primary">保存映射</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- ─── 添加自定义模型弹窗（models-panel.js）───
-       登记一个上游目录里没有、但实际能路由的模型（灰度中的新模型、
-       按账号下发却没进目录的模型）。保存后它会真的进入该家的模型清单，
-       于是能出现在表格里、能被 /v1/models 广告、也能被路由与转发。 -->
-  <div id="custom-model-modal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="custom-model-modal-title">
-    <div class="modal">
-      <div class="modal-head">
-        <h2 id="custom-model-modal-title">添加自定义模型</h2>
-        <button id="custom-model-modal-close" title="关闭">✕</button>
-      </div>
-      <div class="modal-body">
-        <div class="modal-section">
-          <div class="mapping-row mapping-row-single">
-            <div class="mapping-col">
-              <label for="custom-model-provider">提供商</label>
-              <select id="custom-model-provider"></select>
-            </div>
-          </div>
-          <div class="mapping-row mapping-row-single" style="margin-top:10px">
-            <div class="mapping-col">
-              <label for="custom-model-id">上游模型 ID</label>
-              <input id="custom-model-id" type="text" maxlength="128" placeholder="例如 gpt-5.5-preview" autocomplete="off" spellcheck="false">
-            </div>
-          </div>
-          <div class="mapping-preview" id="custom-model-preview"></div>
-          <p class="detail">
-            填上游真正认识的那个模型 ID（不是给下游用的名字）。登记后它会进入该家的模型清单：
-            表格里出现这一行、<code>/v1/models</code> 会广告它、请求它也会被转发到这家。
-            支持字母、数字与 <code>- _ . / :</code>。
-          </p>
-          <p class="detail">
-            「来源」列会标成<b>手动</b>，与远程目录 / 内置清单区分开。删除自定义模型是
-            <b>直接移除</b>这条登记（不像内置模型那样只是隐藏），因为它的存在完全由这次登记决定。
-          </p>
-        </div>
-        <div class="detail" id="custom-model-modal-status" style="min-height:18px"></div>
-      </div>
-      <div class="modal-foot">
-        <div class="spacer"></div>
-        <button id="custom-model-modal-cancel">取消</button>
-        <button id="custom-model-modal-save" class="primary">保存</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- ─── 新建网关 Key 弹窗（keys-panel.js）─── -->
-  <div id="key-modal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="key-modal-title">
-    <div class="modal">
-      <div class="modal-head">
-        <h2 id="key-modal-title">新建 API Key</h2>
-        <button id="key-modal-close" title="关闭">✕</button>
-      </div>
-      <div class="modal-body">
-        <div class="modal-section">
-          <div class="field-row">
-            <label for="key-name">名称</label>
-            <input id="key-name" type="text" maxlength="60" placeholder="例如 Cursor / 公司电脑" autocomplete="off">
-          </div>
-          <div class="field-row" style="margin-top:9px">
-            <label for="key-value">Key</label>
-            <input id="key-value" type="text" placeholder="留空自动生成；手填至少 8 个字符" autocomplete="off" spellcheck="false">
-          </div>
-
-          <!-- ── 可用提供商 / 可用模型（R9，参考 OmniProxy 的 Key 限制）──
-               两个多选都是自研下拉（select.js 增强出来的触发器 + 浮层，与模型管理页
-               「作用提供商」同一控件），选项在打开弹窗时由 keys-panel.js 灌入：
-                 · 可用提供商 = 后端下发的**注册表**摘要（不硬编码 id 清单 ——
-                   项目禁止维护第二份 provider 清单，见 account_store 模块头）
-                 · 可用模型   = 后端下发的 modelsByProvider 按**当前勾选的提供商**
-                   取并集。一家都没勾时它是空的 —— 没有约束范围就没有候选，
-                   空态在浮层里给一句说明（keys-panel.js 的 rebuildModelOptions）。
-                   勾选提供商即时联动重建，不必关掉重开弹窗。
-               `data-placeholder` 是「一项都没勾」时触发器上的文案（写这句的是
-               select.js 的 selectedText）：空选的语义是「不限制」，必须说清 ——
-               留一个空框会让人以为「不选就等于全都不能用」。 -->
-          <div class="field-row" style="margin-top:9px" id="key-restrict-row">
-            <label for="key-allowed-providers">可用提供商</label>
-            <select id="key-allowed-providers" multiple data-placeholder="留空 = 不限制"></select>
-          </div>
-          <div class="field-row" style="margin-top:9px">
-            <label for="key-allowed-models">可用模型</label>
-            <select id="key-allowed-models" multiple data-placeholder="留空 = 不限制"></select>
-          </div>
-          <p class="hint" id="key-restrict-hint">
-            留空表示不限制；同时设置时请求需同时满足两个条件（模型在白名单内且路由到允许的提供商）。
-            「可用模型」的候选跟着上面勾选的提供商走：没勾提供商时它是空的（还没有约束范围），
-            勾了几家就列出这几家能收的全部对外名。
-          </p>
-          <!-- 当前选的摘要（keys-panel.js 的 paintRestrictionState 写它）：
-               多选的触发器上只显示「勾了几项的文案」，勾了哪几家要在这儿摊开 ——
-               用户点完「保存范围」就看不到弹窗了，摘要要在关窗前给他核对一遍。 -->
-          <p class="hint" id="key-restrict-summary"></p>
-        </div>
-        <div class="detail" id="key-modal-status" style="min-height:18px"></div>
-      </div>
-      <div class="modal-foot">
-        <div class="spacer"></div>
-        <button id="key-modal-cancel">取消</button>
-        <button id="key-modal-save" class="primary">创建</button>
-      </div>
-    </div>
-  </div>
+  <!-- 新建 / 编辑网关 Key 弹窗已迁到组件库：实现见
+       desktop-tauri/ui-islands/src/islands/keys-page.tsx（组件库 Dialog 一族），
+       点击时建、关闭即卸，所以这里不再有常驻 DOM。
+       两个多选（可用提供商 / 可用模型）仍走 select.js 的原生 select 增强 ——
+       组件库目前没有多选下拉，见该岛文件头的说明。 -->
 
   <script src="icons.js"></script>
-  <!-- 表格列设置（显示 / 隐藏、顺序、对齐）：四张表共用一个面板。
-       必须排在所有表格脚本之前 —— 各表在**加载期**就 register 自己的列定义
-       （顺序、表头文案、默认对齐），排到它们后面会错过注册，
-       面板按钮与列设置能力就整块不出现。它只依赖 icons.js（按钮上那枚齿轮）。 -->
-  <script src="table-col-settings.js"></script>
+  <!-- 表格列设置已迁到组件库：实现见 desktop-tauri/ui-islands/src/islands/table-col-settings.tsx，
+       随 islands/ui.js 一起加载，对外仍是 window.wbColSettings = { register, apply, configOf,
+       syncStaticHead, close }。四张表在**加载期**就 register，所以 islands/ui.js 必须排在
+       所有表格脚本之前（它现在的位置满足这条，别再往后挪）。 -->
   <!-- 下拉控件增强：必须在 app.js 之前 —— 业务模块（accounts-view / logs-panel /
        proxy-form）执行时就会读写原生 select，外壳要在这之前就位。
        静态 select 在解析到这里时已存在，弹窗与代理表单里动态生成的由它自己的
@@ -1620,13 +1169,22 @@
        设置页的开关写它，所以排在所有业务脚本之前，它们执行时就能用上。 -->
   <script src="units.js"></script>
   <script src="app.js"></script>
-  <!-- React 岛（源码 desktop-tauri/ui-islands/，产物已随仓库提交）：分段筛选与搜索框的
-       语义、键盘交给 Base UI，视觉仍取 ui/css 的既有令牌与手写样式。
-       必须排在所有调 window.wbSegmented.mount() / window.wbInput.mount() 的模块之前 ——
-       最早是 models-panel.js，后面还有 accounts-filters.js / logs-panel.js /
-       requests-panel.js / report.js / add-provider-forms.js。它不依赖 app.js，
-       排这里只为让「岛先于使用者」一目了然。
-       两个岛打在同一份产物里：React 与 react-dom 只能有一份实例。 -->
+  <!-- React 岛（源码 desktop-tauri/ui-islands/，产物已随仓库提交）。三类：
+       · 挂载点式：分段筛选（.island 宿主）、页面级面板（直接挂 .page section）；
+       · 自动增强式：带 data-island-input 的原生输入框，加载时就地升级
+         （含后续动态生成的，由 MutationObserver 接住），业务侧只写属性、不调 API；
+       · 命令式弹窗：import 即注册 window 接口，点击时建、关闭即卸（确认框 /
+         请求清理 / 获取模型 / 请求详情 / 并发上限 / 更换端口）。
+       **必须排在所有使用方的业务脚本之前**：调 window.wbSegmented.mount() 的有
+       accounts-filters.js / report.js / add-provider-forms.js；
+       读岛提供的界面接口的有 app.js（wbPortPanel 等）与一众面板。
+       所有岛打在同一份产物里：React 与 react-dom 只能有一份实例。
+       加新岛只需在 ui-islands/src/islands/ 下放一个文件（目录自注册），不必改这里。 -->
+  <!-- 筛选条件的跨次启动记忆（账号 / 模型 / 请求日志 / 日志四页共用的读写工具）：
+       纯 localStorage 存取、无任何依赖，排在所有消费面板之前即可。
+       必须在 islands/ui.js **之前**：日志页的岛首次渲染就要读它（先读不到会兜住，
+       但排在前面才没有这一拍的抖动）。 -->
+  <script src="filter-memory.js"></script>
   <script src="islands/ui.js"></script>
   <!-- 自定义标题栏（桌面端）：主窗口去掉了系统装饰（src-tauri/lib.rs 建窗处
        decorations(false)），这里动态补一条 32px 的标题栏（左标题右三键，
@@ -1635,14 +1193,9 @@
        它只依赖 workbuddyDesktop 与 icons.js，不依赖 wbApp；排在 app.js
        之后仅为读取顺序整洁。 -->
   <script src="titlebar.js"></script>
-  <!-- 端口状态面板：侧栏的网关进程状态与端口冲突时的两个出口。
-       必须在 app.js 之后：它通过 window.wbApp 读状态、调 toast 与顶栏重画
-       （app.js 的 render() 也会反过来委托它，用可选链，谁先就绪都不报错）。 -->
-  <script src="port-panel.js"></script>
+  <!-- 端口状态面板已迁到组件库：实现见 desktop-tauri/ui-islands/src/islands/port-panel.tsx，
+       随 islands/ui.js 一起加载，对外仍是 window.wbPortPanel = { render, sync, portLabel, isReady }。 -->
   <script src="clipboard.js"></script>
-  <!-- 筛选条件的跨次启动记忆（账号 / 模型 / 请求日志 / 日志四页共用的读写工具）：
-       纯 localStorage 存取、无任何依赖，排在所有消费面板之前即可。 -->
-  <script src="filter-memory.js"></script>
   <!-- 网关页「可用模型」区块（渲染 / 本地过滤 / 刷新模型清单按钮）：必须排在
        app.js 之后 —— 它在加载期就从 window.wbApp 取 esc / toast / getState
        （跨文件引用走 wbApp 是本项目的既有约定，见 accounts-table.js）；
@@ -1650,23 +1203,25 @@
        refresh() 是异步的（首个 await 之后才轮到渲染），排在 app.js 之后即可。
        同时它自带加载期的 DOM 绑定（搜索框 input、刷新按钮 click），
        因此必须排在 index.html 里那两个元素之后（本文件底部，天然满足）。 -->
-  <!-- 思考等级组件（chip 上的等级标 / 映射弹窗里的下拉）：必须排在 models-panel.js
-       之前 —— 后者在 IIFE 里就解构 window.wbModelsReasoning（要的是那个对象本身，
-       不是运行期再查一次）。它只依赖 wbApp 的 esc，所以排在 app.js 之后即可。 -->
-  <script src="models-reasoning.js"></script>
-  <!-- 自定义提供商的模型清单数据源（适配 + 整表提交）：排在 models-panel.js 之前
-       —— 后者在 IIFE 里就解构 window.wbModelsCustom（同样是那个对象本身）。
-       它只依赖 wbProviders（运行期读取），所以也排在 providers.js 之后即可。 -->
-  <script src="models-custom-source.js"></script>
-  <!-- 「获取模型」弹窗：models-panel.js 在点击时运行期读 wbModelsFetchModal，
-       所以排在前或后都行；放这里是为了让「模型」这一组脚本挨在一起 -->
-  <script src="models-fetch-modal.js"></script>
-  <script src="models-panel.js"></script>
+  <!-- 思考等级组件与自定义提供商的模型清单数据源都已并入模型管理页的岛
+       （models-reasoning.ts / models-custom-source.ts，由 models-page.tsx import）。
+       wbModelsReasoning 只被本页用，已不再挂到 window；wbModelsCustom 仍挂在 window 上
+       —— 「获取模型」弹窗的批量导入要调它的 addModels。 -->
+  <!-- 「获取模型」弹窗已迁到组件库：实现见
+       desktop-tauri/ui-islands/src/islands/models-fetch-modal.tsx，随 islands/ui.js
+       一起加载，对外仍是 window.wbModelsFetchModal.open({providerId, custom, name,
+       onDone, onRefreshed})。 -->
+  <!-- 模型管理页已迁到组件库：实现见 desktop-tauri/ui-islands/src/islands/models-page.tsx
+       （数据层 models-panel-state.ts / models-reasoning.ts / models-custom-source.ts 是
+       普通模块，不是岛），随 islands/ui.js 一起加载，对外仍是
+       window.wbModelsPanel 与 window.wbModelsCustom。 -->
   <!-- 网关 Key 页（多把 Key 的列表 / 新建 / 启停 / 删除 / 可用范围限制）：
        同样依赖 wbApp，排在 app.js 之后。选项来源里用到 wbProviders.labelOf
        （可用提供商的展示名）与主状态的 models（可用模型的候选），两者都是
        **运行期**读取，不依赖加载顺序。 -->
-  <script src="keys-panel.js"></script>
+  <!-- 网关 Key 页已迁到组件库：实现见 desktop-tauri/ui-islands/src/islands/keys-page.tsx，
+       随 islands/ui.js 一起加载，对外仍是 window.wbKeysPanel = { load, render,
+       visibleColumns }。 -->
   <!-- 网页登录的交互引擎（WorkBuddy 与小浣熊共用）：等待态 / 取消 / 按钮复位 / 成功收尾
        只实现一次，两家各交一份配置。必须在 add-account.js 之前 —— 后者在加载期就要用它
        建 WorkBuddy 那一份（DOM 在下面那个弹窗里），也必须在 add-provider-forms.js 之前
@@ -1720,46 +1275,44 @@
        请求日志的表头是整块重绘的，它自己用 MutationObserver 补把手，不依赖面板脚本。 -->
   <script src="table-columns.js"></script>
   <script src="accounts-filters.js"></script>
-  <!-- 并发上限小对话框：⋯ 菜单的「并发上限」项点开（open 在点击时才用，
-       先于 accounts-view 加载让依赖关系一眼可见 —— 分支在那里）。 -->
-  <script src="account-conc-dialog.js"></script>
+  <!-- 并发上限小对话框已迁到组件库：实现见 desktop-tauri/ui-islands/src/conc-dialog.tsx，
+       随 islands/ui.js 一起加载（排在 accounts-view 之前），对外仍是
+       window.wbAccountConcDialog.open(account) / .close()，调用方不用改。 -->
   <script src="accounts-view.js"></script>
-  <!-- 通用确认弹窗：替代原生 confirm（Tauri WebView 里原生 confirm 不弹窗直接放行）。
-       排在所有可能调它的面板之前 —— 它只暴露 wbConfirm.ask，点击时才用，
-       但先加载让依赖关系一眼可见。 -->
-  <script src="confirm-dialog.js"></script>
-  <script src="logs-panel.js"></script>
-  <!-- 请求日志的四块「独立小件」，都必须排在 requests-panel.js 之前：
-       · request-phase         进行中请求的**阶段**渲染（连接中 / 等待响应 / 响应中 /
-                                重试中：徽章文案、配色类名、阶段计时）。列表与详情弹窗
-                                渲染的是同一行数据的同一格，两处必须逐字一致，所以
-                                文案集中在这一个小模块里（口径见文件头）。
+  <!-- 通用确认弹窗已迁到组件库：实现见 desktop-tauri/ui-islands/src/islands/confirm-dialog.tsx，
+       随 islands/ui.js 一起加载，对外仍是 window.wbConfirm.ask(options)。 -->
+  <!-- 日志面板已迁到组件库：实现见 desktop-tauri/ui-islands/src/islands/logs-panel.tsx，
+       随 islands/ui.js 一起加载，对外仍是 window.wbLogsPanel = { load, render, lastStats,
+       applyAutoRefresh, showCategory }。 -->
+  <!-- 请求日志的两块「独立小件」：
        · request-hover          列表里重试 / 敏感词两枚标签的悬停面板（整表重绘时还负责
                                 锚点迁移，宿主在重绘前后调 beforeListRedraw /
-                                afterListRedraw 通知它）。requests-panel 在
-                                加载期就调 wbRequestHover.bind 把委托挂到列表上
-                                （走可选链，未就绪时静默跳过 —— 那样整个悬停功能就没了，
-                                所以这个顺序是硬要求，与 tooltip.js 的自动增强不同）。
+                                afterListRedraw 通知它）。已迁到组件库（见
+                                ui-islands/src/islands/request-hover.tsx），
+                                面板岛在挂载时调 wbRequestHover.bind 把委托挂到列表上。
        · conversation-preview   「预览对话」的纯渲染（原文 → 气泡 HTML），没有加载期
-                                行为，放这里只是让「request-detail 依赖谁」在顺序上可见。
-       · request-detail         详情弹窗（请求详情 / 预览对话 / 原始报文三标签）。它**自己**
-                                在加载期绑弹窗的关闭 / 标签事件，并独占 #req-detail-modal
-                                那组 DOM；requests-panel 只在点「详情」时调它的 open(id, row)。
-                                排在前面是为了让「谁负责哪块 DOM」在文件顺序上也看得出来。 -->
-  <script src="request-phase.js"></script>
-  <script src="request-hover.js"></script>
+                                行为。消费方是详情弹窗（已迁到组件库，见
+                                ui-islands/src/islands/request-detail.tsx），它按原样
+                                调用 window.wbConversationPreview.render。 -->
+  <!-- 进行中请求的阶段渲染（request-phase.js）已随面板并入同一个岛
+       （ui-islands/src/islands/requests-page.tsx），对外仍是 window.wbRequestPhase ——
+       详情弹窗（request-detail.tsx）与列表的状态列读的是同一份。 -->
+  <!-- 请求日志的悬停面板已迁到组件库：实现见
+       desktop-tauri/ui-islands/src/islands/request-hover.tsx，随 islands/ui.js 一起加载，
+       对外仍是 window.wbRequestHover = { bind, close, hasProcessFacts, beforeListRedraw,
+       afterListRedraw }（requests-panel.js 在加载期就调 bind，所以它必须排在后面）。 -->
   <script src="conversation-preview.js"></script>
-  <script src="request-detail.js"></script>
-  <script src="requests-panel.js"></script>
-  <!-- 请求日志的「清理」弹窗：排在 requests-panel.js 之后（不是硬要求 —— 它只在
-       点「清理」时通过 wbRequestClearModal.open 打开，且筛选参数走
-       wbRequestsPanel.clearParams 的可选链），放后面与「谁依赖谁」的阅读顺序一致。 -->
-  <script src="request-clear-modal.js"></script>
-  <!-- 定时任务面板：读写两条接口（/api/scheduled-tasks 与 /api/auto-checkin）。
-       排在 logs-panel / requests-panel 之后：它保存成功后要把新间隔推给那两个面板
-       （走可选链，未就绪时静默跳过），放在它们之后更符合「谁依赖谁」的阅读顺序；
-       反过来那两个面板启动时会自读一次配置，所以顺序其实不是硬要求。 -->
-  <script src="tasks-panel.js"></script>
+  <!-- 请求详情弹窗已迁到组件库：实现见
+       desktop-tauri/ui-islands/src/islands/request-detail.tsx，随 islands/ui.js
+       一起加载，对外仍是 window.wbRequestDetail.open(id, row) / .close()。 -->
+  <!-- 请求日志面板已迁到组件库：实现见 desktop-tauri/ui-islands/src/islands/requests-page.tsx，
+       随 islands/ui.js 一起加载，对外仍是 window.wbRequestsPanel = { load, applyAutoRefresh,
+       visibleColumns, clearParams, notifyCleared }。 -->
+  <!-- 请求日志的「清理」弹窗已迁到组件库：实现见
+       desktop-tauri/ui-islands/src/islands/request-clear-modal.tsx，随 islands/ui.js
+       一起加载，对外仍是 window.wbRequestClearModal.open()（无参数，打开即拉预览）。 -->
+  <!-- 定时任务面板已迁到组件库：实现见 desktop-tauri/ui-islands/src/islands/tasks-panel.tsx，
+       随 islands/ui.js 一起加载，对外仍是 window.wbTasksPanel.load()。 -->
   <!-- 报表面板：同样依赖 window.wbApp（esc / toast / currentPage），必须排在 app.js 之后；
        图表全部手写 SVG，不依赖任何图形库，故与其它面板并列即可。
        它内部用 ResizeObserver 重绘图表，容器宽度变化（改窗口、切列数）都能自适应。 -->
@@ -1789,16 +1342,17 @@
        add-provider-forms.js 注册「自定义提供商」表单块，custom-provider-ui.js
        在加载期只绑工具栏按钮（脚本都在 body 末尾，DOM 已解析），其余交互都在
        点击时才消费全局对象（wbProviders），没有别的加载期依赖。
-       模型清单不再有自己的弹窗：模型管理页选中该家即可管（见下面
-       models-custom-source.js 与 models-panel.js），所以这里没有对应的弹窗脚本。 -->
+       模型清单不再有自己的弹窗：模型管理页选中该家即可管（见
+       ui-islands/src/islands/models-page.tsx），所以这里没有对应的弹窗脚本。 -->
   <script src="add-custom-provider.js"></script>
   <script src="custom-provider-ui.js"></script>
   <script src="account-panel.js"></script>
   <!-- Markdown 渲染器：更新日志用。纯函数、无依赖，只认白名单语法（见文件头说明）；
-       必须在 update-panel.js 之前加载 -->
+       必须在 islands/ui.js 之后加载 —— 软件更新面板（update-panel.tsx）渲染更新
+       日志时要读 window.wbMarkdown.render。 -->
   <script src="markdown.js"></script>
-  <!-- update-panel 必须在 settings-panel 之前：后者在设置页首持加载时会调它。 -->
-  <script src="update-panel.js"></script>
+  <!-- 软件更新面板已迁到组件库：实现见 desktop-tauri/ui-islands/src/islands/update-panel.tsx，
+       随 islands/ui.js 一起加载（它排在前面，满足「先于 settings-panel」这条）。 -->
   <script src="settings-panel.js"></script>
   <!-- 数据结构升级弹窗：启动时问一次 /api/upgrade，有待迁移数据就弹。
        排在最后：它的 refreshPanels() 要调各面板的 load()，那些都得先挂好 -->

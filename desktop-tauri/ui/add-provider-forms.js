@@ -524,9 +524,11 @@
           + ` role="radio" aria-checked="false" tabindex="-1">导入</button>`
         : '')
       + `</div>`
+      // 搜索框交给 React 岛自动增强（ui/islands/ui.js 盯着 data-island-input）：
+      // 图标位由岛按 data-island-icon 补上（仍是 .affix，定位照旧靠外层的
+      // .input-affix），这里不再自己拼那个 span。
       + `<span class="input-affix add-provider-search" id="add-search-wrap">`
-      + `<span class="affix">⌕</span>`
-      + `<input type="search" id="${ADD_SEARCH_ID}" placeholder="搜索提供商…" autocomplete="off">`
+      + `<input data-island-input data-island-icon="⌕" type="search" id="${ADD_SEARCH_ID}" placeholder="搜索提供商…" autocomplete="off">`
       + `</span>`
       + `</div>`
       + `<div class="add-provider-grid" id="${ADD_PROVIDER_GRID_ID}" role="listbox"`
@@ -654,7 +656,7 @@
       const marker = field.optional ? '' : '（必填）';
       const control = field.rows
         ? `<textarea id="${id}" rows="${field.rows}" placeholder="${esc(field.placeholder)}"></textarea>`
-        : `<input id="${id}" type="text" maxlength="${maxLengthOf(field)}" placeholder="${esc(field.placeholder)}">`;
+        : `<input data-island-input id="${id}" type="text" maxlength="${maxLengthOf(field)}" placeholder="${esc(field.placeholder)}">`;
       return `<div class="field-row${field.rows ? ' stack' : ''}">`
         + `<label for="${id}">${esc(field.label)}${marker}</label>${control}</div>`;
     }).join('');
@@ -788,16 +790,16 @@
           || '用 AutoClaw 账号绑定的手机号登录：点击「获取验证码」，收到短信后填入下方并登录。验证码由本机直接提交给官方接口，界面不显示 token。'}</p>
         <div class="field-row">
           <label for="${prefix}-sms-phone">手机号（必填）</label>
-          <input id="${prefix}-sms-phone" type="text" maxlength="11" placeholder="11 位大陆手机号">
+          <input data-island-input id="${prefix}-sms-phone" type="text" maxlength="11" placeholder="11 位大陆手机号">
           <button id="${prefix}-sms-send">获取验证码</button>
         </div>
         <div class="field-row">
           <label for="${prefix}-sms-code">验证码（必填）</label>
-          <input id="${prefix}-sms-code" type="text" maxlength="6" placeholder="6 位数字验证码">
+          <input data-island-input id="${prefix}-sms-code" type="text" maxlength="6" placeholder="6 位数字验证码">
         </div>
         <div class="field-row">
           <label for="${prefix}-sms-name">备注名</label>
-          <input id="${prefix}-sms-name" type="text" placeholder="可选，留空则用脱敏手机号">
+          <input data-island-input id="${prefix}-sms-name" type="text" placeholder="可选，留空则用脱敏手机号">
         </div>
         <div class="field-row">
           <button id="${prefix}-sms-submit" class="primary">登录并添加</button>

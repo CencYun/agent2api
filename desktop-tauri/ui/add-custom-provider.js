@@ -126,7 +126,7 @@
         <div class="add-form">
           <div class="add-field">
             <label for="custom-name-input">名称${requiredMark}</label>
-            <input id="custom-name-input" type="text" maxlength="${MAX_NAME_CHARS}"
+            <input data-island-input id="custom-name-input" type="text" maxlength="${MAX_NAME_CHARS}"
               aria-required="true" placeholder="如：智谱 GLM">
             <span class="hint">1~64 个字符，账号列表里按它分组显示</span>
           </div>
@@ -136,13 +136,13 @@
           </div>
           <div class="add-field">
             <label for="custom-baseurl-input">Base URL${requiredMark}</label>
-            <input id="custom-baseurl-input" type="text" aria-required="true"
+            <input data-island-input id="custom-baseurl-input" type="text" aria-required="true"
               placeholder="${BASE_PLACEHOLDER_OPENAI}">
             <span class="hint" id="custom-baseurl-hint">${BASE_HINT_OPENAI}</span>
           </div>
           <div class="add-field">
             <label for="custom-apikey-input">API Key</label>
-            <input id="custom-apikey-input" type="password" autocomplete="new-password"
+            <input data-island-input id="custom-apikey-input" type="password" autocomplete="new-password"
               placeholder="sk-…">
             <span class="hint">留空表示无鉴权上游</span>
           </div>
@@ -161,13 +161,13 @@
           </div>
           <div class="add-field">
             <label for="custom-existing-apikey-input">API Key</label>
-            <input id="custom-existing-apikey-input" type="password" autocomplete="new-password"
+            <input data-island-input id="custom-existing-apikey-input" type="password" autocomplete="new-password"
               placeholder="sk-…">
             <span class="hint">留空表示无鉴权上游</span>
           </div>
           <div class="add-field">
             <label for="custom-existing-name-input">备注名</label>
-            <input id="custom-existing-name-input" type="text" maxlength="${MAX_ACCOUNT_NAME_CHARS}"
+            <input data-island-input id="custom-existing-name-input" type="text" maxlength="${MAX_ACCOUNT_NAME_CHARS}"
               placeholder="可选">
             <span class="hint">留空则用提供商名称</span>
           </div>

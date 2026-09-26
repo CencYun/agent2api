@@ -1,0 +1,42 @@
+/*
+ * Copyright (c) 2026 aimod-cc. All rights reserved.
+ *
+ * Part of @aimod-cc/omniui-react — proprietary and confidential.
+ * Unauthorized copying, distribution, or modification of this file,
+ * via any medium, is strictly prohibited.
+ */
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+@import '@fontsource-variable/public-sans';
+@import '@fontsource-variable/lora';
+
+@import './theme.css';
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    /* 全局细滚动条：thumb 用边框色，轨道透明。 */
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  html {
+    @apply font-sans;
+  }
+  body {
+    @apply bg-background text-foreground min-h-svh w-full;
+    font-family: var(--font-body);
+  }
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+  /* 移动端避免输入聚焦时的缩放 */
+  @media screen and (max-width: 767px) {
+    input,
+    select,
+    textarea {
+      font-size: 16px !important;
+    }
+  }
+}

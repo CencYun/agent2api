@@ -111,15 +111,15 @@
             <option value="socks5">SOCKS5</option>
           </select>
           <label style="margin-left:10px">主机</label>
-          <input type="text" class="pf-host" placeholder="127.0.0.1">
+          <input data-island-input type="text" class="pf-host" placeholder="127.0.0.1">
           <label>端口</label>
-          <input type="number" class="pf-port" min="1" max="65535" style="max-width:110px" placeholder="7890">
+          <input data-island-input type="number" class="pf-port" min="1" max="65535" style="max-width:110px" placeholder="7890">
         </div>
         <div class="field-row" style="margin-top:10px">
           <label>用户名</label>
-          <input type="text" class="pf-username" placeholder="可选" autocomplete="off">
+          <input data-island-input type="text" class="pf-username" placeholder="可选" autocomplete="off">
           <label>密码</label>
-          <input type="password" class="pf-password" placeholder="可选" autocomplete="new-password">
+          <input data-island-input type="password" class="pf-password" placeholder="可选" autocomplete="new-password">
         </div>
       </div>
 
