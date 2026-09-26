@@ -328,10 +328,17 @@
     if (task.lastRunAt) {
       state.push(`上次执行 ${clockOf(task.lastRunAt)}${task.lastResult ? `（${task.lastResult}）` : ''}`);
     } else {
-      state.push(task.runner === 'backend' ? '本次启动后还未执行' : '由页面按间隔自动刷新');
+      // 排期与上次执行都跨重启保留（后端落库），因此这里说的是「从未执行过」
+      // 而不是「本次启动后还没执行」—— 重启本身不会再触发一轮
+      state.push(task.runner === 'backend' ? '还没有执行记录' : '由页面按间隔自动刷新');
     }
     if (task.runner === 'backend' && task.enabled && task.nextRunAt) {
       state.push(`下次执行 ${clockOf(task.nextRunAt)}（${describeNext(task.nextRunAt)}）`);
+    }
+    // 失败冷却：上游限流（GitHub 403/429 等）或连续失败时后端会把下一轮推后，
+    // 这一行是用户唯一能看出「为什么一直没跑」的地方
+    if (task.runner === 'backend' && task.retryAt && task.retryAt > Date.now()) {
+      state.push(`冷却中，${describeNext(task.retryAt)}重试`);
     }
     const stateBox = item.querySelector('[data-task-state]');
     if (stateBox) stateBox.textContent = state.join('　·　');

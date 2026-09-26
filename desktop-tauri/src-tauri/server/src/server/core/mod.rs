@@ -72,6 +72,7 @@ pub mod proxies;
 pub mod routing;
 pub mod sanitize;
 pub mod scheduled_tasks;
+pub mod task_state;
 pub mod update;
 pub mod upstream;
 pub mod usage_query;

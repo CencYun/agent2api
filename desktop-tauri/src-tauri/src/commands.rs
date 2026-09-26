@@ -7,7 +7,7 @@
 
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use tauri_plugin_dialog::DialogExt;
 
@@ -743,53 +743,3 @@ fn timestamp_for_filename() -> String {
     format!("{year:04}-{month:02}-{day:02}-{hour:02}-{minute:02}-{second:02}")
 }
 
-/// 启动维护：让网关刷新一遍临期凭证，结果推给渲染层。
-/// 任一环节失败只记日志，不影响窗口使用（与原 Electron 版行为一致）。
-///
-/// ── 余额查询为什么从这里移走了 ──────────────────────────────
-/// 原先这里还会调一次 `GET /api/accounts/usage`。现在余额查询归「定时查询积分」
-/// 这条定时任务（`scheduled_tasks` 的 backend 任务，默认每 10 分钟一次），
-/// 而它的**首轮在网关 bootstrap 后就立即跑一次**（`seed_schedule` 把首次排到
-/// 「现在」）—— 于是启动时该做的这一次查询依旧会发生，只是执行者换成了定时任务。
-///
-/// 两处各查一遍的代价是每个账号在启动瞬间被打两次上游积分接口：既无收益
-/// （同一份数据），又平白多担一次风控风险。更关键的是「关掉定时查询积分 =
-/// 启动也不查」这条一致性 —— 与其它定时任务（「关掉任务 = 启动也不刷」）同款，
-/// 留着这里这一份会让那条开关变得半失效。
-///
-/// 界面因此改为读定时任务的结果快照（`/api/accounts/usage/snapshot`），
-/// 由 `usage-actions.js` 的 `syncSnapshot` 应用 —— 手动点「查询积分」那条路径
-/// 不受影响，它仍走 `GET /api/accounts/usage` 当场取。
-pub async fn startup_maintenance(app: AppHandle) {
-    // 临期凭证的刷新**交给网关自己**（POST /api/accounts/refresh-expiring）：
-    // 「哪个账号该刷」是各家 provider 的知识（过期时间字段名、临期窗口四家
-    // 各不相同），壳侧按字段名判断会漏（曾漏掉小浣熊的 `tokenExpiresAt`）。
-    // 网关那边同时还有每 10 分钟的周期维护，这里这一次调用是为了让**刚启动的
-    // 这一轮**尽快把状态刷对，而不是等第一个周期。
-    //
-    // 保留 `refreshed` 的语义（本次实际刷新成功的账号 id 列表）：渲染层的
-    // `accounts:auto-maintained` 事件按它的长度决定要不要提示用户。
-    let refreshed = match gateway::call("POST", "/api/accounts/refresh-expiring", None).await {
-        Ok(report) => report
-            .get("results")
-            .and_then(Value::as_array)
-            .map(|results| {
-                results
-                    .iter()
-                    .filter(|item| item.get("status").and_then(Value::as_str) == Some("refreshed"))
-                    .filter_map(|item| item.get("id").and_then(Value::as_str))
-                    .map(str::to_string)
-                    .collect::<Vec<String>>()
-            })
-            .unwrap_or_default(),
-        Err(error) => {
-            eprintln!("[startup] 自动刷新临期凭证失败: {error}");
-            Vec::new()
-        }
-    };
-
-    let _ = app.emit("accounts:auto-maintained", json!({ "refreshed": refreshed }));
-    if !refreshed.is_empty() {
-        eprintln!("[startup] 已自动刷新 {} 个临期账号的 Token", refreshed.len());
-    }
-}

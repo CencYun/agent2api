@@ -1144,14 +1144,16 @@
   <div id="add-modal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="add-title">
     <div class="modal">
       <div class="modal-head">
-        <h2 id="add-title">登录 / 添加 WorkBuddy 账号</h2>
+        <!-- 标题固定是「添加账号」：这一层只回答「给哪一家加」，选完弹出去的那层
+             （#add-form-modal，由 add-provider-forms.js 注入）才带提供商的名字 -->
+        <h2 id="add-title">添加账号</h2>
         <button id="close-modal" title="关闭">✕</button>
       </div>
 
       <div class="modal-body">
         <div class="modal-section">
           <h3>账号版本</h3>
-          <p>国内版走 copilot.tencent.com，国际版走 www.workbuddy.ai，两版账号可同时保存、按账号自动路由。</p>
+          <p>两版账号可同时保存，按账号自动路由。</p>
           <!-- 账号版本由 React 岛渲染（见 ui/islands/ui.js）：选项在 add-account.js 里给。
                岛用的是 radiogroup/radio 语义 —— 它表达的是「一组互斥取值里选一个」的表单语义；
                role=tab 那套是切视图页签用的，账号页筛选栏早年那批 tablist 子项并未带 role=tab，
@@ -1161,7 +1163,7 @@
 
         <div class="modal-section">
           <h3>网页登录</h3>
-          <p>打开官方 WorkBuddy 登录页，完成登录后自动加入账号列表（排在全局队列最后，不改变已有账号的相对顺序）。账号昵称取自上游，无需手动填写。</p>
+          <p>完成登录后自动加入账号列表，昵称取自上游。</p>
           <div class="field-row">
             <span class="add-seg-label">打开方式</span>
             <!-- 打开方式同样由 React 岛渲染：选项在 add-account.js 里给 -->
@@ -1176,11 +1178,11 @@
               <span>恢复 Google / GitHub 入口</span>
             </label>
           </div>
-          <p>系统浏览器可复用你已有的登录态（国际版推荐）；内嵌窗口与你日常浏览器隔离，更干净。</p>
+          <p>系统浏览器可复用已有登录态（国际版推荐）；内嵌窗口更干净。</p>
           <div class="field-row">
             <button id="web-login-button" class="primary">打开网页登录</button>
             <button id="web-login-cancel" style="display:none">取消等待</button>
-            <span class="detail" id="web-login-hint">将打开内嵌窗口，登录完成后自动加入账号列表；关掉此窗口即取消等待</span>
+            <span class="detail" id="web-login-hint">内嵌窗口打开；完成后自动加入列表，关窗即取消等待</span>
           </div>
         </div>
       </div>

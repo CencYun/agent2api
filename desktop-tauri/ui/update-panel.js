@@ -389,7 +389,9 @@
     setState('正在查询 GitHub 上的最新发布版本…');
     try {
       info = await api.checkUpdate();
-      checkedAt = Date.now();
+      // 时刻以后端返回的为准：这一下可能落在定时任务刚查完的缓存上，
+      // 用本地时钟会把几分钟前的结果标成「刚刚查的」
+      checkedAt = Number(info?.checkedAt) || Date.now();
       if (info?.repository) applyRepository(info.repository);
       renderCheckResult();
       // 更新日志与上面那段同源（都是这次 checkUpdate 的结果），一起重绘即可
@@ -408,6 +410,40 @@
     // 左侧导航的提示：只有确实有新版本才亮，失败与「已是最新」都静默
     wbApp.updateUpdateBadge?.(info);
     return info;
+  }
+
+  /**
+   * 铺面板：读**后端缓存**里的最近一次检查结果，不自己打 GitHub。
+   *
+   * ── 为什么前端不再自动查询 ──────────────────────────────────
+   * 查询由后端定时任务负责（「软件版本检查」，默认每 20 分钟一次，排期与结果都
+   * 持久化在库里）。前端每次加载都自己再查一遍是重复劳动，而且代价很高：
+   * dev 模式热重载下页面一天要重载几十次，匿名限额（60 次/小时，按出口 IP 计）
+   * 很快见底 —— 见底之后连定时任务也一起失败，日志页刷满同一条「接口访问受限」，
+   * 而本该做的只是等下一个检查窗口。要立刻查有「检查更新」按钮（check()，
+   * 那是用户主动发起的一次请求，受最短间隔与失败冷却约束）。
+   *
+   * 缓存里没有结果时（后端刚起、或用户关掉了这条定时任务）按「未检查」显示 ——
+   * 此时点按钮即可查，与缓存不可用前是同一个界面。
+   */
+  async function syncFromCache() {
+    if (info) { renderCheckResult(); renderChangelog(); return; }
+    let cached = null;
+    try {
+      cached = await api.getUpdateStatus();
+    } catch { /* 后端未就绪：按未检查处理 */ }
+    if (cached && cached.checked !== false) {
+      info = cached;
+      checkedAt = Number(cached.checkedAt) || 0;
+      if (info.repository) applyRepository(info.repository);
+      renderCheckResult();
+      renderChangelog();
+      // 导航提示与 check() 同一出口：定时任务查到新版本时也能亮起来
+      wbApp.updateUpdateBadge?.(info);
+      return;
+    }
+    setBadge('未检查');
+    setState('点击「检查更新」查询 GitHub 上的最新发布版本。');
   }
 
   async function downloadOrCancel() {
@@ -490,10 +526,11 @@
 
     // 启动时已经自动检查过一次的话，把那次结果原样铺回来（含检查时刻）。
     // 这里曾经无条件重置成「未检查」，那样等于把启动检查的结果白白丢掉
-    if (info) { renderCheckResult(); return; }
+    if (info) { renderCheckResult(); renderChangelog(); return; }
 
-    setBadge('未检查');
-    setState('点击「检查更新」查询 GitHub 上的最新发布版本。');
+    // 本次会话还没有结果：读后端缓存（定时任务按间隔查一次、结果落库的那一份）。
+    // 这里**不再自己打 GitHub** —— 理由见 syncFromCache。
+    await syncFromCache();
   }
 
   /**
@@ -522,7 +559,7 @@
     if (downloading || $('btn-update-download')?.dataset.installPath) return;
     if (!info?.hasUpdate) return;
     // downloadOrCancel 开头有 `if (busy) return`，而 busy 在**别的**检查 / 下载
-    // 正在进行时为真（后端的定时检查每 5 分钟一轮，正好卡在这个瞬间的话，
+    // 正在进行时为真（后端的定时检查到点才跑，正好卡在这个瞬间的话，
     // 这一下会被静默吞掉，人看到的就是「点了没反应」）。每轮先等再判，
     // 给在跑的那件事让出时间；三轮仍占用就放弃 —— 按钮本来就在面板上，
     // 用户手点一下即可，不值得为它无限重试。
@@ -544,5 +581,5 @@
   // 面板内的外链统一走委托（含「关于作者」与日志正文里的链接）
   $('update-notes')?.closest('.panel')?.addEventListener('click', onPanelClick);
 
-  window.wbUpdatePanel = { load, check, openAndDownload };
+  window.wbUpdatePanel = { load, check, syncFromCache, openAndDownload };
 })();

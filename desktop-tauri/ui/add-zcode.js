@@ -60,13 +60,23 @@
       },
       manualTitle: '填写凭证',
       manualNoteHtml: '本家有两个**互不替代**的凭证，按你要用的功能填，至少填一个：'
-        + '<b>accessToken</b> 用于转发推理（打 <code>' + site + '</code>）；'
+        + '<b>编码套餐 API Key</b> 用于转发推理（打 <code>' + site + '</code>）；'
         + '<b>jwt</b> 用于领取套餐（打 <code>zcode.z.ai</code>，官方叫 Coding Plan JWT，'
         + '是一串三段点分的字符串）。只填 jwt 的账号能领套餐但不能转发，反之亦然。'
         + `请填写 <b>${label}</b>账号的凭证 —— ${planNote}`
-        + '（最容易拿到的办法：直接用上方的「网页登录」，两个凭证会一起拿到。）',
+        + '（最容易拿到的办法：直接用上方的「网页登录」—— 它会替你把这个 API Key'
+        + '换好，两个凭证一起拿到。）',
       fields: [
-        { key: 'accessToken', label: 'accessToken', rows: 3, optional: true, placeholder: '用于转发；不填则这个账号不能转发' },
+        {
+          key: 'accessToken',
+          label: '编码套餐 API Key',
+          rows: 3,
+          optional: true,
+          // 这里**不能**填 OAuth 登录态：那个串拿去转发会被上游按「OAuth 令牌」
+          // 那条路校验并回 401。官方客户端与「网页登录」这条链都是先把它换成
+          // 编码套餐的 API Key 再用，见 providers::zcode::coding_key。
+          placeholder: '用于转发；形如 apiKey.secret 两段点分（不填则这个账号不能转发）',
+        },
         { key: 'jwt', label: 'Coding Plan JWT', inputKey: 'jwt', rows: 3, optional: true, placeholder: '用于领取套餐；不填则这个账号不能领取' },
         { key: 'userId', label: '用户 ID', optional: true, placeholder: '可选；用于生成账号 id 与展示名' },
         { key: 'name', label: '备注名', optional: true, placeholder: '可选，留空自动生成' },
