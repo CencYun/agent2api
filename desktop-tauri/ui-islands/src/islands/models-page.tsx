@@ -44,15 +44,14 @@
  * 数据行（tbody）相反：完全由 React 按 `visibleColumns()` 逐列渲染，与表头读同一份配置。
  *
  * ── 控件替换（组件库）与刻意保留的旧实现 ────────────────
- * 换组件库：面板头两颗按钮、状态筛选（SegmentedControl）、搜索框（InputGroup）、chip 上的
- * 映射开关（Switch）、模型 ID 的复制按钮、展开/收起、行内「移除」、来源徽标（Badge）、
- * 两个弹窗整块（Dialog 一族 + Input / Select / Label / Tooltip）。
- * 保留旧实现（组件库缺对应控件，已写进交付说明）：
- *   · 左栏的 `.pv` / `.pv-del` / `.pv-add` —— 它们是「导航项」而不是按钮，样式全在
- *     page-gateway.css 里；Button 的工具类带 !important 且分层，会把 `.pv.on` 的选中底色
- *     与 `.pv:hover` 一起盖掉（选中态会整个消失），所以照旧用原生 button + 原类名；
- *   · chip 里的「×」与等级标（`.alias .x` / `.alias .level`）—— 16px 的药丸内小件，Button
- *     最小档也是 24px，套上去会把 chip 从 26px 撑到 32px 并改变整张表的行高。
+ * 换组件库：左栏导航项（NavItem）、面板头两颗按钮、状态筛选（SegmentedControl）、搜索框
+ * （InputGroup）、chip 上的映射开关（Switch size='sm'）、chip 上的等级标与删除 ×（Button 的
+ * 2xs / icon-2xs 档）、「＋ 映射」（Button variant='dashed'）、模型 ID 的复制按钮、展开/收起、
+ * 行内「移除」、来源徽标（Badge）、两个弹窗整块（Dialog 一族 + Input / Select / Label / Tooltip）。
+ * 保留旧实现的两处都不是控件本身：
+ *   · 自定义家条目外层的 `.pv-row` 定位容器与那颗 `.pv-del` —— HTML 不允许 button 嵌套，
+ *     删除 × 必须与 NavItem 做兄弟节点，靠 .pv-row 定位（见 rail 里的说明）；
+ *   · chip 容器本身仍是 `span.alias` —— 它是药丸外壳而不是按钮，样式全在 page-gateway.css 里。
  * 另外：本页已经没有原生 `<select>`，所以不再调 `wbSelect.sync`（那个机制是给未迁移页面用的）。
  *
  * ── 数据行不用 `hidden` 属性隐藏 ────────────────────
@@ -76,6 +75,7 @@ import {
   InputGroupAddon,
   InputGroupInput,
   Label,
+  NavItem,
   SegmentedControl,
   Select,
   SelectContent,
@@ -108,6 +108,14 @@ import {
 
 /** 单元格的外壳类名（对齐由列设置给，三档互斥，与 table-col-settings 的 applyAlign 同一套） */
 const cellClass = (base: string, align?: Align): string => (align ? `${base} ta-${align}` : base)
+
+/**
+ * 自定义家条目悬浮时把右侧计数让给删除 ×（两者占同一块位置，不藏就会叠字）。
+ * 这条行为原来由 page-gateway.css 的 `.pv-row:hover .pv .n` 提供；换成 NavItem 之后计数是
+ * 组件内部按 `data-slot` 渲染的 span，按 `.n` 类名命中的那条规则不再匹配，于是用工具类补回。
+ * 只有带删除 × 的条目（自定义家）需要它，内置家不传。
+ */
+const RAIL_HIDE_COUNT_ON_HOVER = '[.pv-row:hover_&_[data-slot=nav-item-count]]:invisible'
 
 /** 倍率文案：后端给的 `x1.5` 这类字符串只留数值部分（照抄旧实现） */
 function formatCredits(credits: unknown): string {
@@ -168,40 +176,38 @@ function ModelsPage() {
     return (
       <aside className='prov-rail' id='prov-rail' aria-label='按提供商选择'>
         <div className='rail-label'>内置提供商</div>
-        {/* .pv 一族是**导航项**（行高 / 选中底色 / hover 让位计数全在 page-gateway.css 里），
-            不是按钮：组件库 Button 的工具类会把 .pv.on 的选中底色一起盖掉，所以照旧原生 button */}
-        <button type='button' className={cn('pv', provider === 'all' && 'on')} data-provider='all'
-          title={allLabel} onClick={() => selectProvider('all')}>
-          <span className='nm'>{allLabel}</span><span className='n'>{total}</span>
-        </button>
+        {/* 条目是导航项而不是按钮，走 NavItem（选中态 / 悬浮态 / 字重 / 计数都在组件里，
+            与原来的 .pv 是同一套令牌取值）。shadow-none 是为了清掉 ui/css/components.css
+            里通用 `button { box-shadow: var(--shadow-1) }` —— 平铺的导航列表不该有投影，
+            .pv / .nav-item 原先也是显式清掉的 */}
+        <NavItem active={provider === 'all'} data-provider='all' title={allLabel} count={total}
+          className='shadow-none' onClick={() => selectProvider('all')}>{allLabel}</NavItem>
         {[...counts].map(([key, entry]) => (
-          <button key={key} type='button' className={cn('pv', provider === key && 'on')}
-            data-provider={key} title={entry.label} onClick={() => selectProvider(key)}>
-            <span className='nm'>{entry.label}</span><span className='n'>{entry.n}</span>
-          </button>
+          <NavItem key={key} active={provider === key} data-provider={key} title={entry.label}
+            count={entry.n} className='shadow-none'
+            onClick={() => selectProvider(key)}>{entry.label}</NavItem>
         ))}
         <div className='rail-label'>自定义提供商</div>
         {customs.length ? customs.map(item => {
           const id = String(item.id || '')
           const label = String(item.name || id)
           return (
-            // 删除按钮不能嵌进 .pv（button 套 button 是无效 HTML，解析器会把内层提到外面、
-            // 绝对定位跟着失去参照），所以外面套一层定位容器
+            // 删除按钮不能嵌进 NavItem（button 套 button 是无效 HTML，解析器会把内层提到外面、
+            // 绝对定位跟着失去参照），所以外面套一层定位容器，× 与条目做兄弟节点
             <div className='pv-row' key={id}>
-              <button type='button' className={cn('pv', provider === id && 'on')}
-                data-provider={id} title={label} onClick={() => selectProvider(id)}>
-                <span className='nm'>{label}</span>
-                <span className='n'>{Array.isArray(item.models) ? item.models.length : 0}</span>
-              </button>
+              <NavItem active={provider === id} data-provider={id} title={label}
+                count={Array.isArray(item.models) ? item.models.length : 0}
+                className={cn('shadow-none', RAIL_HIDE_COUNT_ON_HOVER)}
+                onClick={() => selectProvider(id)}>{label}</NavItem>
               <button type='button' className='pv-del' aria-label='删除自定义提供商'
                 title='删除这个自定义提供商（连同名下账号）'
                 onClick={() => void removeCustomProvider(id)}>×</button>
             </div>
           )
         }) : <div className='rail-empty'>还没有自定义提供商</div>}
-        <button type='button' className='pv-add' id='rail-add-custom'
+        <NavItem variant='add' id='rail-add-custom'
           title='新建一个自定义提供商（同时创建它的第一个账号）'
-          onClick={() => openAddCustomProvider()}>＋ 新建自定义提供商</button>
+          onClick={() => openAddCustomProvider()}>＋ 新建自定义提供商</NavItem>
       </aside>
     )
   }
@@ -210,11 +216,15 @@ function ModelsPage() {
   function levelBadge(alias: string, target: string, providerId: string, busy: boolean) {
     const level = levelOf(alias, target, providerId)
     return (
-      <button type='button' className={cn('alias-level', !level && 'unset')} disabled={busy}
+      // 16px 小件（2xs 档）：原来那枚 mono 10px 的小药丸。已绑定走实心档、未绑定走虚线档，
+      // 与旧 CSS 的 `.alias-level` / `.alias-level.unset` 同一套语义（mono 粗体也照旧）；
+      // shadow-none 是清掉通用 button 规则的投影（旧 CSS 同样显式清过）
+      <Button variant={level ? 'secondary' : 'dashed'} size='2xs' disabled={busy}
+        className='font-mono font-bold shadow-none'
         title={level ? `思考等级 ${level}（点击修改）` : '设置思考等级（当前未绑定）'}
         onClick={() => openMapping({ alias, target, provider: providerId })}>
         {level || '＋等级'}
-      </button>
+      </Button>
     )
   }
 
@@ -250,8 +260,10 @@ function ModelsPage() {
       return (
         <span className={cn('alias', !on && 'map-off')} key={`${alias}\u0001${binding.isDefault ? 'd' : 'm'}`}>
           {/* 映射自己的开关（关掉 = 这条别名暂时不存在，可再打开）。行禁用时 chips 随行压淡，
-              映射开关另用 map-off 弱化 —— 两个维度独立，一眼可辨 */}
-          <Switch checked={on} disabled={busy}
+              映射开关另用 map-off 弱化 —— 两个维度独立，一眼可辨。size='sm' 是 24×14 的小号，
+              与旧 CSS 里 `.alias .switch .track` 同尺寸：标准档（36×21）塞进 22px 的药丸里
+              会把 chip 连同整张表的行高一起撑高 */}
+          <Switch size='sm' checked={on} disabled={busy}
             title={on ? '映射已启用，点击关闭' : '映射已关闭，点击启用'}
             aria-label={`${on ? '关闭' : '启用'}映射 ${alias}`}
             onCheckedChange={next => {
@@ -265,8 +277,11 @@ function ModelsPage() {
           {binding.isDefault ? <span className='binding-default'>默认</span> : null}
           {levelBadge(alias, model.id, providerId, busy)}
           {binding.isDefault ? null : (
-            <button type='button' className='x' disabled={busy} title={`删除映射 ${alias}`}
-              onClick={() => void confirmUnmap(alias)}>×</button>
+            // 16px 的删除小件（icon-2xs 档）：字号 / 行高照旧 CSS 的 `.alias .x` 给，
+            // 免得 × 跟着 chip 的 11px 一起缩水
+            <Button variant='ghost' size='icon-2xs' className='text-[12px] leading-none'
+              disabled={busy} title={`删除映射 ${alias}`}
+              onClick={() => void confirmUnmap(alias)}>×</Button>
           )}
         </span>
       )
@@ -277,8 +292,10 @@ function ModelsPage() {
       <div className='aliases'>
         <div className='alias-row'>
           {head ? chip(head) : null}
-          <button type='button' className='alias-add'
-            onClick={() => openMapping({ target: model.id, provider: providerId })}>＋ 映射</button>
+          {/* dashed = 「这里还能再添一个」的入口语义（对应旧的 .alias-add），与旁边那些
+              实心按钮一眼分开 */}
+          <Button variant='dashed' size='xs'
+            onClick={() => openMapping({ target: model.id, provider: providerId })}>＋ 映射</Button>
         </div>
         {rest.map(chip)}
       </div>

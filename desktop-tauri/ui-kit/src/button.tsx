@@ -11,6 +11,11 @@ import { cn } from './lib/cn'
  * icon-sm / icon-lg —— 名字与档位都照标准来，按 shadcn 的习惯写就能命中。
  * 样式值取项目令牌（见 styles/theme.css），观感与既有界面一致。
  *
+ * 两处本项目的扩展（shadcn 标准里没有，但既有界面需要）：
+ *   · `variant='dashed'` 虚线描边，表达「入口」而不是「操作」；
+ *   · `size='2xs'` / `'icon-2xs'` 16px 小件档，给药丸（chip）内部用。
+ * 它们仍然是 variant / size 的取值，不另起 prop。
+ *
  * 与 ui/css/components.css 那套类名的对应：button.primary → default，
  * 基础 button → outline，button.danger → destructive，button.sm → sm，button.icon → icon。
  *
@@ -41,14 +46,28 @@ const buttonVariants = cva(
         /** 危险按钮：语义柔底 + 语义描边 */
         destructive:
           'border-destructive-bd bg-destructive-soft text-destructive hover:bg-destructive-hover',
+        /**
+         * 虚线描边按钮：语义是「入口」而不是「操作」—— 加一条映射、加一项白名单
+         * 这类「这里还能再添一个」的位置用它，与旁边那些实心按钮一眼分开
+         * （对应 ui/css 的 `.alias-add` / `.pv-add`）。
+         */
+        dashed:
+          'border-dashed border-border-strong bg-transparent text-muted-foreground shadow-none hover:border-primary hover:text-primary-fg',
         link: 'border-transparent bg-transparent text-primary shadow-none underline-offset-4 hover:underline',
       },
       size: {
         default: 'h-[30px] rounded-md px-3 text-[12.5px]',
+        /**
+         * 药丸内的小件档（16px）：映射 chip 里的等级标与删除 ×。
+         * 再往下的 24px（xs / icon-xs）塞进 22px 高的药丸里会把整行撑高，
+         * 而 chip 的行高是表格行高的一部分 —— 撑高一行就是整张表变松。
+         */
+        '2xs': 'h-4 rounded-pill px-1.5 text-[10px]',
         xs: 'h-6 rounded-sm px-2 text-[11.5px]',
         sm: 'h-[26px] rounded-sm px-2.5 text-[12px]',
         lg: 'h-9 rounded-md px-4 text-[13px]',
         icon: 'h-[30px] w-[30px] rounded-md p-0',
+        'icon-2xs': 'size-4 rounded-pill p-0',
         'icon-xs': 'size-6 rounded-sm p-0',
         'icon-sm': 'h-[26px] w-[26px] rounded-sm p-0',
         'icon-lg': 'size-9 rounded-md p-0',

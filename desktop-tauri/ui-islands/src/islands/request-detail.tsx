@@ -132,16 +132,6 @@ type DebugState = null | 'gone' | { data: DebugTraffic }
 /** 终止按钮的三态：可点 / 在途（禁用）/ 已受理（禁用且不再放开） */
 type TerminateState = 'idle' | 'pending' | 'accepted'
 
-/**
- * 敏感词命中标签的紫色。ui-kit 的 Badge 没有紫色档（sensitive），这里就地取
- * 一份与 ui/css/page-requests.css 的 `.badge.tag.sensitive` **逐字相同**的色值
- *（浅深两套），而不是另造一个组件 —— 已作为「组件库缺一档紫色徽章」反馈，
- * 等它补上后删掉这段 className 覆盖。
- */
-const SENSITIVE_BADGE_CLASS =
-  'border-[oklch(0.55_0.18_305/32%)] bg-[oklch(0.55_0.18_305/14%)] text-[oklch(0.45_0.18_305)] '
-  + 'dark:border-[oklch(0.7_0.16_305/34%)] dark:bg-[oklch(0.7_0.16_305/16%)] dark:text-[oklch(0.82_0.12_305)]'
-
 /** 详情网格 / 尝试明细的单元格：同一口径只写一处 */
 const GRID_CELL = 'border-b border-hairline px-2.5 py-[7px] align-top'
 const ATTEMPT_CELL = 'border border-hairline px-2 py-1 align-top'
@@ -489,7 +479,7 @@ function DetailPane({ row }: { row: RequestRow | null }) {
           {Array.isArray(row.sensitiveHits) && row.sensitiveHits.length ? (
             <span className='inline-flex flex-wrap gap-1.5'>
               {row.sensitiveHits.map((hit, index) => (
-                <Badge key={index} variant='outline' shape='tag' className={SENSITIVE_BADGE_CLASS}>
+                <Badge key={index} variant='sensitive' shape='tag'>
                   {String(hit?.word ?? '')} × {String(Number(hit?.count) || 0)}
                 </Badge>
               ))}

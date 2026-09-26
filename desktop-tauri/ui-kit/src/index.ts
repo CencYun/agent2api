@@ -89,4 +89,22 @@ export {
   type SegmentedControlOption,
   type SegmentedControlProps,
 } from './segmented-control'
+export { Toggle, toggleVariants, type ToggleProps } from './toggle'
+export {
+  MultiSelect,
+  type MultiSelectOption,
+  type MultiSelectProps,
+} from './multi-select'
+export {
+  Popover,
+  PopoverTrigger,
+
+  PopoverClose,
+  PopoverContent,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverDescription,
+} from './popover'
+export { Pager, type PagerProps } from './pager'
+export { NavItem, navItemVariants, type NavItemProps } from './nav-item'
 export { cn } from './lib/cn'

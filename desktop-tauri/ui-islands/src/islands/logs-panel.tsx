@@ -2,6 +2,7 @@ import * as React from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   Badge, Button, InputGroup, InputGroupAddon, InputGroupInput,
+  Pager,
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
   SegmentedControl, type SegmentedControlOption,
 } from '@ui'
@@ -30,11 +31,12 @@ import {
  * 高度，中间插一层会打断它）。保留的页面布局类：`.panel` `.panel-head` `.panel-body`
  * `.panel-foot` `.head-actions` `.log-filters` `.log-list` `.log-row`（含 `.log-rail`
  * `.log-dot` `.log-main` `.log-line` `.log-cat` `.log-lvl` `.msg` `.log-extra-wrap` `.extra`
- * `.time`）`.log-empty` `.log-pager` `.log-pager-info` `.spacer` —— 布局不是「组件」，换成
+ * `.time`）`.log-empty` `.spacer` —— 布局不是「组件」，换成
  * Tailwind 会让这一页与其它页长得不一样（样式在 ui/css/page-logs.css 与 layout.css）。控件一律
  * 换：button → Button、`.badge` → Badge、原生 `<select>` → Select 一族、搜索框 → InputGroup 一族
  * （图标 ⌕，与 input-control.tsx 用法一致）、时间档位 → SegmentedControl（不再调 wbSegmented，
- * 也不再留 `#logs-range` 那个挂载点）。
+ * 也不再留 `#logs-range` 那个挂载点）、分页栏 → Pager（`.log-pager` / `.log-pager-info` 随之退场，
+ * 边界判断与读数收在组件里，与请求日志页同一口径）。
  *
  * ── 坑：带 Tailwind display 工具类的元素上 hidden 无效 ─────────
  * 组件库的工具类是**分层 + !important** 的，tokens.css 的 `[hidden] { display:none !important }`
@@ -923,14 +925,14 @@ function LogsPanel() {
         <span>日志保存在 <code id='logs-file'>{data.file}</code>，保留最近 500 条，重启后仍可查询。</span>
         <span>429 自动切换会带上「原账号 → 目标账号」</span>
         <div className='spacer' />
-        {/* 分页：页脚右侧，与面板头部的操作按钮同侧 */}
-        <div className='log-pager'>
-          <Button id='btn-logs-prev' size='sm' variant='outline' disabled={page <= 1}
-            onClick={() => gotoPage(page - 1)}>上一页</Button>
-          <Button id='btn-logs-next' size='sm' variant='outline' disabled={page >= pageCount}
-            onClick={() => gotoPage(page + 1)}>下一页</Button>
-          <span id='logs-page-info' className='log-pager-info'>{`第 ${page} / ${pageCount} 页`}</span>
-        </div>
+        {/* 分页：页脚右侧，与面板头部的操作按钮同侧。边界判断与「第 N / M 页」读数都在 Pager 里
+            （与请求日志页同一个件）。flex-none 补的是旧 CSS `.log-pager { flex: 0 0 auto }` —— 组
+            件根是默认可收缩的 flex 项，不补的话窄窗口下整组会被压扁而不是像原来那样整组换行；
+            whitespace-nowrap 是继承属性，补的是 `.log-pager-info { white-space: nowrap }`，读数
+            不会在窄窗口里断成两行。翻页仍然只重绘不打接口（数据一次拉满，见 gotoPage）；原先
+            两颗按钮也没有「在途禁用」，这里不新加（Pager 的 disabled 缺省 false）。 */}
+        <Pager page={page} pageCount={pageCount} onPageChange={gotoPage}
+          className='flex-none whitespace-nowrap' />
       </div>
     </section>
   )

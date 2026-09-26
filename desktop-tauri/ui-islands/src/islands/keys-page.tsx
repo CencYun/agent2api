@@ -12,7 +12,9 @@ import {
   DialogTitle,
   Input,
   Label,
+  MultiSelect,
   Switch,
+  type MultiSelectOption,
 } from '@ui'
 
 /**
@@ -29,18 +31,15 @@ import {
  * 每行可单独「显示」明文并复制（复制走 clipboard.js 的 data-copy 委托）。
  * 「可用提供商 / 可用模型」两个白名单**空数组 = 不限制**（见后端 core::api_keys）。
  *
- * ── 两个多选为什么保留 select.js ─────────────────────────────
- * 这两个控件是**多选**，而组件库的 Select 是单选（Base UI 的 Select 不支持 multiple），
- * ui-kit 里也没有多选下拉。所以这一版按约定保留旧实现：React 里渲染原生
- * `<select multiple>`，在 layout effect 里灌选项并显式调 `wbSelect.sync(el)`
- * —— select.js 的 observer 回调跑在微任务里，重建选项后紧接着同步读界面还是旧的。
- * 等 ui-kit 补上多选下拉再换（见交付说明里的缺口清单）。
+ * ── 两个多选走组件库的 MultiSelect ───────────────────────────
+ * 「可用提供商 / 可用模型」是**受控**的 React state（不再渲染原生 `<select multiple>`
+ * 再让 select.js 增强）：候选、勾选、联动全在这一层算 —— 联动规则见 modelOptions，
+ * 提交给后端的取值口径见 pickedFromOptions。
  *
  * ── 弹窗走组件库的 Dialog（与 request-clear-modal / conc-dialog 同一手法）──
  * 旧的 `#key-modal`（.modal-mask 一族）不再使用：Esc / 点遮罩关闭、焦点陷阱、滚动
- * 锁定都由 Dialog 内建。两个多选留在弹窗里与 Base UI 的模态并不冲突 —— select.js
- * 的浮层是「打开时才挂到 body」的第三方节点，Base UI 的 outside-press 判定对
- * 「浮层渲染之后注入的节点」明确放行（见其 useDismiss 的 markers 分支）。
+ * 锁定都由 Dialog 内建。MultiSelect 的浮层是 Base UI 自己的浮层（portal 到 body，
+ * z-35 高于弹窗的 z-30），与模态共用同一套 outside-press 判定，不需要额外放行。
  *
  * ── 列设置：为什么在 layout effect 里注册，而不是模块顶层 ──────
  * ① 本岛的模块体比 table-col-settings.tsx 先执行（import.meta.glob 按文件名字典序），
@@ -105,7 +104,7 @@ type KeysBridge = {
  * window 上由其它脚本 / 其它岛挂载的共享桥。
  *
  * 刻意用「局部窄类型 + 转型」而不是 declare global 往 Window 上加属性：
- * workbuddyDesktop / wbApp / wbColSettings / wbSelect 是多个岛共用的桥，若每个岛
+ * workbuddyDesktop / wbApp / wbColSettings / wbProviders 是多个岛共用的桥，若每个岛
  * 各 declare 一份，接口合并会因同名属性类型不一致直接报 TS2717。本文件只 declare
  * 自己独占的 wbKeysPanel（见文件末尾）。
  */
@@ -139,10 +138,6 @@ type SharedWindow = {
       onChange?: () => void
     }): ColSettingsHandle
     syncStaticHead(id: string, table: Element | null | undefined): void
-  }
-  wbSelect?: {
-    /** 立即把外壳同步到 select 的当前状态（见文件头：重建选项后必须显式调） */
-    sync?: (select: HTMLSelectElement) => boolean
   }
   /** 提供商显示名（注册表 + 自定义家的查找链，注册表里没有的 id 回落原样） */
   wbProviders?: { labelOf?: (id: string) => string | undefined }
@@ -272,7 +267,7 @@ function modelOptions(
   table: Record<string, string[]>,
   selectedProviders: string[],
   selected: string[],
-): { id: string; label: string }[] {
+): MultiSelectOption[] {
   const names = new Map<string, string>() // 小写 → 原始名（先到先得，保住后端给的大小写）
   const put = (value: unknown) => {
     const text = String(value ?? '').trim()
@@ -286,8 +281,8 @@ function modelOptions(
   })
   // 已勾选的模型无论是否还在并集里都要铺出来（见函数说明）
   selected.forEach(put)
-  const out = [...names.values()].map(id => ({ id, label: id }))
-  out.sort((a, b) => (a.id.toLowerCase() < b.id.toLowerCase() ? -1 : 1))
+  const out = [...names.values()].map(value => ({ value, label: value }))
+  out.sort((a, b) => (a.value.toLowerCase() < b.value.toLowerCase() ? -1 : 1))
   return out
 }
 
@@ -320,38 +315,49 @@ function restrictionTitle(k: KeyEntry): string {
   return lines.join('\n')
 }
 
-/* ─── 多选的读写（select.js 的原生 select 形态）──── */
-
-type MultiOption = { id: string; label: string }
-
 /**
- * 把选项灌进多选（每次打开 / 提供商勾选变化时整体重建）。
- * 重建而不是增量补：数据源可能整体换过，增量比对要写一整套 diff，收益只有「保留
- * 勾选」—— 而勾选由调用方在重建后用 `selected` 参数按 id 还回去。重建后必须显式
- * `wbSelect.sync()`：select.js 的 observer 回调跑在微任务里，紧接着同步读界面还是旧的。
+ * 弹窗里「当前选的摘要」。为什么要有它：限制是**看不见的** —— 弹窗一关，列表上只剩
+ * 「限制：…」一行；而多选的触发器只显示连接后的一行文案，清单长了会被省略号收掉。
+ * 用户点完「保存范围」就看不到弹窗了，勾了哪几家 / 哪些模型得在这儿给他核对一遍。
  */
-function fillMultiSelect(
-  select: HTMLSelectElement | null,
-  options: MultiOption[],
-  selected: string[],
-): void {
-  if (!select) return
-  const chosen = new Set((selected || []).map(item => String(item).toLowerCase()))
-  select.innerHTML = options.map(item =>
-    `<option value="${escapeHtml(item.id)}"${chosen.has(item.id.toLowerCase()) ? ' selected' : ''}>`
-    + `${escapeHtml(item.label)}</option>`,
-  ).join('')
-  // 空选项时 select.js 的浮层打不开（它不会为一个空浮层开口子），这里补一条禁用的
-  // 说明项，让用户至少看到「为什么没有东西可选」
-  if (!options.length) {
-    select.innerHTML = `<option value="" disabled>${escapeHtml(select.dataset.emptyHint || '暂无可选项')}</option>`
+function restrictionSummary(providers: readonly string[], models: readonly string[]): string {
+  if (!providers.length && !models.length) {
+    return '当前不限制：这把 Key 可以用全部提供商与全部对外模型'
   }
-  shared().wbSelect?.sync?.(select)
+  const parts: string[] = []
+  if (providers.length) parts.push(`提供商：${providers.map(providerLabel).join('、')}`)
+  if (models.length) parts.push(`模型：${models.join('、')}`)
+  // 只限制了模型、没限制提供商（旧数据里可能存在这种组合）：模型候选此刻只剩已勾的
+  // 那几个（没有提供商就没有并集可铺），要说清怎么把候选拿回来 —— 否则用户会以为
+  // 「模型清单坏了，加不了新的」
+  if (!providers.length) {
+    parts.push('（模型候选需先选提供商；不选则沿用当前这几项，保存后仍按模型白名单生效）')
+  }
+  return parts.join('　')
 }
 
-/** 读一个多选里当前勾选的 value（保持选项顺序） */
-function selectedValues(select: HTMLSelectElement | null): string[] {
-  return select ? [...select.selectedOptions].map(option => option.value).filter(Boolean) : []
+/* ─── 多选的选项与取值 ───────────────────────── */
+
+/** 白名单字段是后端给的，可能缺失 / 形状不对（非数组一律当空，与旧实现同口径） */
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(item => String(item)) : []
+}
+
+/**
+ * 把 state 里的勾选值按**候选表**归一：只留候选里存在的项、顺序照候选表、写法以候选
+ * 为准（模型名的大小写可能与清单不一致，旧实现就是按小写比对后把候选的写法写回 DOM）。
+ * 这就是旧实现 `[...select.selectedOptions].map(option => option.value)` 的口径 ——
+ * 那时「勾选」只存在于渲染出来的 option 上，候选里没有的 id 落不到 DOM 里，提交时自然
+ * 被丢掉。**提交给后端的两个数组必须逐字保持这个口径**。
+ */
+function pickedFromOptions(values: readonly string[], options: readonly MultiSelectOption[]): string[] {
+  const canonical = new Map(options.map(option => [option.value.toLowerCase(), option.value]))
+  const chosen = new Set<string>()
+  values.forEach(value => {
+    const hit = canonical.get(String(value).toLowerCase())
+    if (hit) chosen.add(hit)
+  })
+  return options.filter(option => chosen.has(option.value)).map(option => option.value)
 }
 
 /* ─── 弹窗（新建 / 改可用范围共用）──────────────── */
@@ -373,85 +379,59 @@ function KeyModal({ target, providers, modelsByProvider, onClose, onSaved }: Key
   const [name, setName] = React.useState(target?.name ?? '')
   const [keyValue, setKeyValue] = React.useState('')
   const [status, setStatus] = React.useState('')
-  const [summary, setSummary] = React.useState('')
   const [saving, setSaving] = React.useState(false)
   /** 在途守卫：命令式的关闭判定（Esc / 点遮罩）必须能**同步**读到它 */
   const savingRef = React.useRef(false)
 
-  const providersRef = React.useRef<HTMLSelectElement | null>(null)
-  const modelsRef = React.useRef<HTMLSelectElement | null>(null)
+  /** 两个白名单的勾选（受控；**空数组 = 不限制**）。初值照抄后端给的数组，不在这里删改 */
+  const [pickedProviders, setPickedProviders] = React.useState<string[]>(
+    () => stringList(target?.allowedProviders),
+  )
+  const [pickedModels, setPickedModels] = React.useState<string[]>(
+    () => stringList(target?.allowedModels),
+  )
 
-  /** 当前选的摘要（旧实现直接写 DOM 的 textContent，这里落进 state） */
-  function paintRestrictionState(): void {
-    const pickedProviders = selectedValues(providersRef.current)
-    const pickedModels = selectedValues(modelsRef.current)
-    if (!pickedProviders.length && !pickedModels.length) {
-      setSummary('当前不限制：这把 Key 可以用全部提供商与全部对外模型')
-      return
-    }
-    const parts: string[] = []
-    if (pickedProviders.length) {
-      parts.push(`提供商：${pickedProviders.map(providerLabel).join('、')}`)
-    }
-    if (pickedModels.length) parts.push(`模型：${pickedModels.join('、')}`)
-    // 只限制了模型、没限制提供商（旧数据里可能存在这种组合）：模型候选此刻只剩已勾的
-    // 那几个（没有提供商就没有并集可铺），要说清怎么把候选拿回来 —— 否则用户会以为
-    // 「模型清单坏了，加不了新的」
-    if (!pickedProviders.length) {
-      parts.push('（模型候选需先选提供商；不选则沿用当前这几项，保存后仍按模型白名单生效）')
-    }
-    setSummary(parts.join('　'))
-  }
+  /** 提供商候选 = 后端下发的注册表摘要（项目禁止维护第二份 provider 清单） */
+  const providerOptions = React.useMemo<MultiSelectOption[]>(
+    () => providers.map(item => ({ value: String(item.id), label: String(item.label ?? item.id) })),
+    [providers],
+  )
 
   /**
-   * 重建「可用模型」的候选（提供商勾选变化时调）。勾选前先把**当前已勾的模型**读出来
-   * 当保留项传进去 —— 否则取消勾选一家会让那家独有的、已被勾上的模型从选项里消失，
-   * 用户再想取消它都点不到。
+   * 勾选值按候选表归一后的结果 —— 它是**唯一对外**的东西：MultiSelect 的受控值、摘要、
+   * 提交给后端的数组都用它，与旧实现从 `<select>` 的 selectedOptions 读值同一口径
+   * （见 pickedFromOptions 的说明）。
    */
-  function rebuildModelOptions(): void {
-    const select = modelsRef.current
-    if (!select) return
-    const pickedProviders = selectedValues(providersRef.current)
-    const pickedModels = selectedValues(select)
-    // 空候选的说明文案分两种：没勾提供商时是「先选提供商」，勾了却是空才是「这几家
-    // 现在没有可用模型」（后端没给该家的清单 = 没登录态）
-    select.dataset.emptyHint = pickedProviders.length
+  const allowedProviders = React.useMemo(
+    () => pickedFromOptions(pickedProviders, providerOptions),
+    [pickedProviders, providerOptions],
+  )
+
+  /**
+   * 模型候选跟着「已勾选的提供商」重建：勾一家立刻多出这家的对外名，取消一家则收回去。
+   * 但**已勾选的模型一律留在候选里**（见 modelOptions）—— 用户没动过模型那栏，
+   * 保存就不该悄悄少几项。
+   */
+  const modelCandidates = React.useMemo(
+    () => modelOptions(modelsByProvider, allowedProviders, pickedModels),
+    [modelsByProvider, allowedProviders, pickedModels],
+  )
+
+  const allowedModels = React.useMemo(
+    () => pickedFromOptions(pickedModels, modelCandidates),
+    [pickedModels, modelCandidates],
+  )
+
+  /**
+   * 空候选的说明文案分两种：没勾提供商时是「先选提供商」，勾了却是空才是「这几家
+   * 现在没有可用模型」（后端没给该家的清单 = 没登录态）。有候选时不写这句 ——
+   * 那时浮层里空只可能是搜索没匹配上。
+   */
+  const modelEmptyHint = modelCandidates.length
+    ? '没有匹配的选项'
+    : allowedProviders.length
       ? '这几家当前没有可用模型（账号未登录或清单为空）'
       : '请先在上面选择可用提供商'
-    fillMultiSelect(select, modelOptions(modelsByProvider, pickedProviders, pickedModels), pickedModels)
-    paintRestrictionState()
-  }
-
-  /**
-   * 打开即灌两个多选。只在挂载时做一次：选项源（注册表摘要 / 模型清单）在弹窗存活
-   * 期间不会变 —— 列表数据变了弹窗也会跟着关掉重开。
-   */
-  React.useLayoutEffect(() => {
-    fillMultiSelect(providersRef.current, providers.map(item => ({
-      id: String(item.id),
-      label: String(item.label ?? item.id),
-    })), target?.allowedProviders || [])
-    rebuildModelOptions()
-  }, [])
-
-  /**
-   * 两个多选的变化：提供商变 → 重建模型候选（联动）；模型自己变 → 只刷摘要。
-   * 用原生 addEventListener 而不是 React 的 onChange：事件是 select.js 在 toggle 里
-   * 手工 dispatch 的（写完 option.selected 立刻同步派发），走原生监听与旧实现同一条路。
-   */
-  React.useEffect(() => {
-    const providerSelect = providersRef.current
-    const modelSelect = modelsRef.current
-    if (!providerSelect || !modelSelect) return
-    const onProviders = () => rebuildModelOptions()
-    const onModels = () => paintRestrictionState()
-    providerSelect.addEventListener('change', onProviders)
-    modelSelect.addEventListener('change', onModels)
-    return () => {
-      providerSelect.removeEventListener('change', onProviders)
-      modelSelect.removeEventListener('change', onModels)
-    }
-  }, [])
 
   /** 收尾：解除在途守卫（写两处，避免两边漂移） */
   function stopSaving(): void {
@@ -461,8 +441,7 @@ function KeyModal({ target, providers, modelsByProvider, onClose, onSaved }: Key
 
   async function save(): Promise<void> {
     if (savingRef.current) return
-    const allowedProviders = selectedValues(providersRef.current)
-    const allowedModels = selectedValues(modelsRef.current)
+    // 两个白名单直接用归一后的勾选（见 pickedFromOptions），字段名与取值口径都与旧实现一致
     savingRef.current = true
     setSaving(true)
     setStatus('保存中…')
@@ -539,31 +518,46 @@ function KeyModal({ target, providers, modelsByProvider, onClose, onSaved }: Key
                   onKeyDown={event => { if (event.key === 'Enter') void save() }} />
               </div>
             )}
-            {/* 两个多选：**不给 className / 不写 size** —— 宽度规则（min 180 / max 260）
-                与「原生 select 当宽高锚」都在 page-gateway.css 里按 id 写，触发器外壳
-                跟着它一起被撑到同样尺寸。id 保留是刻意的（见交付说明）。 */}
+            {/* 两个多选走组件库的 MultiSelect（受控）。宽度规则（min 180 / max 260）原先是
+                page-gateway.css 按 `#key-allowed-providers` / `#key-allowed-models` 给的，
+                而 MultiSelect 的触发器不吃 id（组件库不转发）—— 那条规则成了死规则，
+                等价的宽度锚只能自己带：flex-auto 就是旧 CSS 里的 `flex: 1 1 auto`。
+                触发器上没有可见 label 与之关联（同样没有 id 可给 htmlFor），所以 aria-label
+                必须给，否则读屏只念到一串连接起来的选项名。 */}
             <div className='flex flex-wrap items-center gap-2.5'>
-              <Label htmlFor='key-allowed-providers' className='text-[12.5px] whitespace-nowrap text-subtle'>
-                可用提供商
-              </Label>
-              <select id='key-allowed-providers' multiple data-placeholder='留空 = 不限制'
-                ref={providersRef} />
+              <Label className='text-[12.5px] whitespace-nowrap text-subtle'>可用提供商</Label>
+              <MultiSelect
+                value={allowedProviders}
+                onValueChange={setPickedProviders}
+                options={providerOptions}
+                placeholder='留空 = 不限制'
+                searchPlaceholder='搜索提供商…'
+                aria-label='可用提供商'
+                className='flex-auto min-w-[180px] max-w-[260px]'
+              />
             </div>
             <div className='flex flex-wrap items-center gap-2.5'>
-              <Label htmlFor='key-allowed-models' className='text-[12.5px] whitespace-nowrap text-subtle'>
-                可用模型
-              </Label>
-              <select id='key-allowed-models' multiple data-placeholder='留空 = 不限制'
-                ref={modelsRef} />
+              <Label className='text-[12.5px] whitespace-nowrap text-subtle'>可用模型</Label>
+              <MultiSelect
+                value={allowedModels}
+                onValueChange={setPickedModels}
+                options={modelCandidates}
+                placeholder='留空 = 不限制'
+                emptyHint={modelEmptyHint}
+                searchPlaceholder='搜索模型…'
+                aria-label='可用模型'
+                className='flex-auto min-w-[180px] max-w-[260px]'
+              />
             </div>
             <p>
               留空表示不限制；同时设置时请求需同时满足两个条件（模型在白名单内且路由到允许的提供商）。
               「可用模型」的候选跟着上面勾选的提供商走：没勾提供商时它是空的（还没有约束范围），
               勾了几家就列出这几家能收的全部对外名。
             </p>
-            {/* 当前选的摘要：多选的触发器上只显示「勾了几项的文案」，勾了哪几家要在这儿
-                摊开 —— 用户点完「保存范围」就看不到弹窗了，摘要要在关窗前给他核对一遍。 */}
-            <p>{summary}</p>
+            {/* 当前选的摘要：多选的触发器上只显示「连接后的一行文案」，清单长了会被省略号
+                收掉 —— 勾了哪几家 / 哪些模型要在这儿摊开。id 沿用旧实现的：page-gateway.css
+                按它给这行加了上边距（它是「当前选择」而不是「使用说明」）。 */}
+            <p id='key-restrict-summary'>{restrictionSummary(allowedProviders, allowedModels)}</p>
           </DialogSection>
           <div className='min-h-[18px] text-[11.5px] text-muted-foreground'>{status}</div>
         </DialogBody>

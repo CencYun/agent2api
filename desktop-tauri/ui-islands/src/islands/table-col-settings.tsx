@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { createRoot } from 'react-dom/client'
-import { Button, SegmentedControl, Switch, cn } from '@ui'
+import { Button, Popover, PopoverContent, SegmentedControl, Switch, cn } from '@ui'
 
 /**
  * Agent2API · 表格列设置（列的显示 / 隐藏 · 顺序 · 对齐）—— React 岛。
@@ -16,20 +16,34 @@ import { Button, SegmentedControl, Switch, cn } from '@ui'
  * 四张表的列集合 / 顺序 / 对齐就会与面板各画一个样。所以这里只把它搬进 TS，不改行为。
  *
  * ── 第二层：浮层面板（本次换掉）────────────────────────────────
- * 旧实现用 innerHTML 拼 `.colset-panel` 一族、常驻 body；现在改成按需建宿主 div +
- * createRoot、关闭时 `unmount()` + 摘宿主（与 conc-dialog / request-clear-modal 同一手法）。
+ * 外壳交给组件库的 `Popover`（Base UI，`modal={false}` 的非模态浮层）：定位（floating-ui）、
+ * 点面板外收起、Esc、焦点归位都是它内建的，这里不再自算坐标、不再自己挂 scroll / resize
+ * 跟随、不再自己抓 pointerdown 与 keydown。挂载方式照旧：按需建宿主 div + createRoot、
+ * 关闭时 `unmount()` + 摘宿主（与 conc-dialog / request-clear-modal 同一手法）—— 浮层是
+ * 单例，为一个「平时不存在」的东西常驻 React root 不划算。
  *
- * 面板外壳**不用** Dialog 一族：面板不是模态 —— 它不该有遮罩、不该锁滚动、点外面要能关，
- * 而组件库的 Dialog 这三样全是内建的（遮罩 + 滚动锁 + 焦点陷阱），套上去等于把「非模态
- * 浮层」硬掰成模态。ui-kit 里也没有 Popover / Popup 这类非模态浮层件，所以外壳用 Tailwind
- * 按旧 `.colset-panel` 的观感自绘（取值全部走组件库令牌），已在交付说明里报给主代理。
- * 控件则全部换组件库：显隐走 `Switch`、对齐三档走 `SegmentedControl`、按钮走 `Button`。
+ * **锚点直接用那颗齿轮按钮**：PopoverContent 的 `anchor` 属性把 Base UI 的
+ * `Positioner.anchor` 透了出来，所以浮层贴的就是 `button.getBoundingClientRect()`，
+ * 不必给按钮套包裹层、更不必盖一层触发器当替身（盖上去会挡住按钮自己的 hover 与 title）。
+ * 代价见「点外关闭与按钮自己那一下」一段：没有 Trigger，按钮的 click 会被 Base UI
+ * 当成「点面板外」，得自己把这一次认出来。
+ * 控件仍全部走组件库：显隐 `Switch`、对齐三档 `SegmentedControl`、按钮 `Button`。
  *
  * ── 触发按钮（齿轮）为什么留在命令式一侧 ───────────────────────
  * 它插在 legacy 渲染出来的表头工具条里（`#batch-bar .batch-actions`、`.panel-head .head-actions`），
  * 插入位置与「排在最前 / 最后」由那些脚本的加载期决定；它的 `.colset-btn` / `.open` 样式也还在
  * ui/css 里。那是「打开浮层的触发管道」而不是浮层本体：换成 React 只会多一层宿主对齐成本，
- * 换不来任何行为收益，所以照旧。
+ * 换不来任何行为收益，所以照旧 —— 按钮本身不归 React 管。
+ *
+ * ── 点外关闭与按钮自己那一下（这段是本次最容易做错的地方）──────
+ * Base UI 判定「点面板外」是在 document 的**捕获阶段**（useDismiss 的 click 监听），
+ * 而按钮自己的 click 处理器在冒泡阶段 —— 于是「面板开着时点按钮」的顺序是：
+ *   ① 捕获：目标不在浮层内、也不是已登记的触发器 → 判为点外 → 关窗（卸载 React root）；
+ *   ② 冒泡：按钮的处理器调 togglePanel → 发现没有面板了 → **又开一次**。
+ * 结果就是按钮按下去关不掉。解法是把 ① 的那一次 click 认出来：onOpenChange 的
+ * eventDetails 带着原始事件，把它记下，按钮的处理器见到同一个事件对象就只清标记、
+ * 不再开窗（见 outsidePressEvent / makeButton）。用事件对象本身做判据而不是时间戳：
+ * 同一次 click 只会走这两处，跨次不会撞。
  *
  * ── 拖动排序为什么不上拖拽库 ──────────────────────────────────
  * 与旧实现同一取舍：拖动过程中配置一变就要重画（开关与对齐档的状态跟着配置走），
@@ -37,10 +51,12 @@ import { Button, SegmentedControl, Switch, cn } from '@ui'
  * 节点换掉不影响会话。这里保留旧实现的 pointerdown / pointermove / pointerup，
  * 视觉照旧：拖动行压淡 50%、跨过哪一行就在哪一行落位、松手才写盘与通知。
  *
- * ── 定位为什么照抄旧算法、不换浮层库 ───────────────────────────
- * 行为要一致：贴锚点右下、下方放不下就翻向上、贴边收 8px、滚动跟随、锚点被移除就收起、
- * 点面板外收起、Esc 收起。旧算法只有十几行且这些边界都在真实界面上磨过；换浮层库要重新
- * 对齐时序（「锚点滚出视口就收起」在浮层库里通常是**隐藏**而不是关闭），风险大于收益。
+ * ── 定位档位与旧 placePanel 的取舍 ────────────────────────────
+ * 旧算法是「贴锚点右下、下方放不下就翻向上、贴边收 8px」，逐像素都是磨过的；现在用
+ * `side='bottom'` + `align='end'` + `sideOffset=6` + `collisionPadding=8`（后者写在组件库里）
+ * 表达同一取向，翻向与贴边交给 floating-ui 的 flip / shift。差别与理由见交付说明；
+ * 唯一保留的自算逻辑是「锚点滚出视口 / 被摘掉就收起」—— 浮层库对这两种情况的处理是
+ * **跟着贴边**（`data-anchor-hidden`）而不是关闭，与旧行为的差别用户看得见。
  */
 
 /* ─── 常量与类型 ─────────────────────────────── */
@@ -72,6 +88,14 @@ const DRAGGING_CLASS = 'colset-dragging'
 
 /** 锚点按钮「面板开着」的类（`.colset-btn.open` 的样式在 ui/css 里，照旧复用） */
 const BUTTON_OPEN_CLASS = 'open'
+
+/**
+ * 最近一次「因为点面板外而关闭」的那次 click（原始事件对象）。
+ * 面板开着时点按钮，Base UI 会在捕获阶段把它判成点外并关窗，按钮自己的处理器
+ * 紧接着在冒泡阶段跑 —— 靠这个标记认出「刚才那一下就是我自己」，只清标记不再开窗。
+ * 判据用事件对象而不是时间戳：同一次 click 只会走这两处，跨次不会撞。
+ */
+let outsidePressEvent: Event | null = null
 
 /** 表头与数据行共用同一套网格：手柄 / 列名 / 显隐开关 / 对齐段。
  *  列名 minmax(78px,1fr)：长列名省略而不是把对齐段挤出去；
@@ -290,13 +314,16 @@ function commit(spec: TableEntry, { silent = false }: { silent?: boolean } = {})
 
 /* ─── 浮层外壳（命令式：按需建宿主、关闭即卸）────── */
 
+/** 浮层的锚点就是那颗齿轮按钮本身（PopoverContent 的 anchor 属性透传给了 Base UI） */
+type Anchor = HTMLButtonElement
+
 /** 当前浮层。整页只有这一个（两处各弹一个是不可能的） */
 type PanelHandle = {
   id: string
   spec: TableEntry
   /** React 侧注册的重画入口；面板还没挂好时是空操作（旧实现的 renderPanel） */
   repaint: () => void
-  /** 卸 React root + 摘宿主；组件自己的清理（监听、拖动会话、锚点 .open）在 unmount 里跑 */
+  /** 卸 React root + 摘宿主；组件自己的清理（拖动会话、锚点 .open）在 unmount 里跑 */
   destroy: () => void
 }
 
@@ -310,26 +337,7 @@ function closePanel(): void {
   current.destroy()
 }
 
-/**
- * 摆浮层：默认贴锚点按钮的右下，右边 / 下边放不下就翻向，贴边收 8px。
- * 算法逐字照抄旧实现（含「上方也放不下就仍往下放」那条判断的写法），见文件头。
- */
-function placePanel(card: HTMLElement, anchor: HTMLElement): { left: number; top: number } {
-  const rect = anchor.getBoundingClientRect()
-  const box = card.getBoundingClientRect()
-  const EDGE = 8
-  const left = Math.max(EDGE, Math.min(rect.right - box.width, window.innerWidth - EDGE - box.width))
-  const below = window.innerHeight - rect.bottom - 6 - EDGE
-  const top = below >= box.height || rect.top < box.height + 6
-    ? rect.bottom + 6
-    : rect.top - 6 - box.height
-  return {
-    left: Math.round(left),
-    top: Math.round(Math.max(EDGE, Math.min(top, window.innerHeight - EDGE - box.height))),
-  }
-}
-
-function openPanelFor(spec: TableEntry, anchor: HTMLElement): void {
+function openPanelFor(spec: TableEntry, anchor: Anchor): void {
   closePanel()
   const host = document.createElement('div')
   document.body.append(host)
@@ -349,7 +357,7 @@ function openPanelFor(spec: TableEntry, anchor: HTMLElement): void {
 }
 
 /** 同一个表的按钮再点一次 = 收起；点另一张表的按钮 = 换浮层（旧实现同） */
-function togglePanel(spec: TableEntry, anchor: HTMLElement): void {
+function togglePanel(spec: TableEntry, anchor: Anchor): void {
   if (panel && panel.id === spec.id) closePanel()
   else openPanelFor(spec, anchor)
 }
@@ -369,11 +377,11 @@ function moveItem(config: ColConfigItem[], from: number, to: number): ColConfigI
 
 /**
  * 指针落点下面那一行的列 key（拖动时用它判断「跨过了哪一列」）。
- * 只在落点属于本面板时才算数 —— 页面别处也可能有 data-col-key。
+ * 只在落点属于本面板的行区时才算数 —— 页面别处也可能有 data-col-key。
  */
-function rowKeyAt(x: number, y: number, card: HTMLElement | null, config: ColConfigItem[]): string {
+function rowKeyAt(x: number, y: number, rows: HTMLElement | null, config: ColConfigItem[]): string {
   const node = document.elementFromPoint(x, y)?.closest?.('[data-col-key]')
-  if (!node || !card || !card.contains(node)) return ''
+  if (!node || !rows || !rows.contains(node)) return ''
   const key = node.getAttribute('data-col-key') || ''
   return config.some(item => item.key === key) ? key : ''
 }
@@ -392,8 +400,8 @@ const GRIP_ICON = (
 
 type PanelProps = {
   spec: TableEntry
-  /** 触发按钮：浮层贴它定位，「点面板外收起」也把它算作面板一侧 */
-  anchor: HTMLElement
+  /** 锚点：那颗命令式建出来的齿轮按钮，浮层贴的就是它的矩形 */
+  anchor: Anchor
   /** React 侧的重画入口：commit 通过它让浮层跟上配置（旧实现的 renderPanel） */
   repaintRef: { current: (() => void) | null }
   /** 收起浮层（由命令式外壳提供） */
@@ -408,9 +416,8 @@ type PanelProps = {
  * 渲染时直接读 `spec.config`。
  */
 function ColSettingsPanel({ spec, anchor, repaintRef, onClose }: PanelProps) {
-  const cardRef = React.useRef<HTMLDivElement | null>(null)
-  /** 面板左上角坐标；null = 还没量过（先按 hidden 渲染，layout effect 里量完即落位） */
-  const [pos, setPos] = React.useState<{ left: number; top: number } | null>(null)
+  const button = anchor
+  const rowsRef = React.useRef<HTMLDivElement | null>(null)
   const [draggingKey, setDraggingKey] = React.useState<string | null>(null)
   const dragSessionRef = React.useRef<DragSession | null>(null)
   const [, setVersion] = React.useState(0)
@@ -425,61 +432,31 @@ function ColSettingsPanel({ spec, anchor, repaintRef, onClose }: PanelProps) {
     }
   }, [repaint, repaintRef])
 
-  // 锚点按钮的「开着」态：挂到面板生命周期上，收起时还原（样式在 ui/css 里，照旧复用）
+  // 锚点按钮的「开着」态：挂到浮层的生命周期上 —— 浮层在，类与 aria 状态就在，卸掉才还原。
+  // 关闭是「卸 root」一步到位（没有退出动画），所以这里不会提前摘掉（样式在 ui/css 里，照旧复用）
   React.useEffect(() => {
-    anchor.classList.add(BUTTON_OPEN_CLASS)
-    return () => anchor.classList.remove(BUTTON_OPEN_CLASS)
-  }, [anchor])
-
-  // 首次摆位：量高度必须在进 DOM 之后。用 layout effect 在同一帧内量完再落位，
-  // 用户看不到未定位的那一帧（与旧实现「渲染完立刻量一次」等价）
-  React.useLayoutEffect(() => {
-    const card = cardRef.current
-    if (!card) return
-    setPos(placePanel(card, anchor))
-  }, [anchor])
-
-  // 滚动跟随 / 窗口缩放：浮层是 fixed，不随内容滚动。锚点滚出视口就收起
-  //（与旧实现、tooltip.js 同一取舍：读面板时滚动不该把面板弄没）
-  React.useEffect(() => {
-    const follow = () => {
-      const card = cardRef.current
-      if (!card) return
-      if (!anchor.isConnected) {
-        onClose()
-        return
-      }
-      const rect = anchor.getBoundingClientRect()
-      if (rect.width && rect.bottom > 0 && rect.top < window.innerHeight) setPos(placePanel(card, anchor))
-      else onClose()
-    }
-    window.addEventListener('scroll', follow, true)
-    window.addEventListener('resize', follow)
+    button.classList.add(BUTTON_OPEN_CLASS)
+    button.setAttribute('aria-expanded', 'true')
     return () => {
-      window.removeEventListener('scroll', follow, true)
-      window.removeEventListener('resize', follow)
+      button.classList.remove(BUTTON_OPEN_CLASS)
+      button.setAttribute('aria-expanded', 'false')
     }
-  }, [anchor, onClose])
+  }, [button])
 
-  // 点面板外收起（捕获阶段的 pointerdown，与旧实现同）+ Esc 收起。
-  // 锚点按钮算「面板一侧」：点它由它自己的 click 走 toggle，不在这里被误关
+  // 锚点滚出视口 / 被摘掉就收起：这是旧算法里唯一没交给浮层库的一条 ——
+  // Positioner 只会「跟随 + 贴边」，锚点滚出视口后浮层会挂在视口边上、与按钮脱节
   React.useEffect(() => {
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target as Node | null
-      if (!target) return
-      if (cardRef.current?.contains(target) || anchor.contains(target)) return
-      onClose()
+    const check = () => {
+      const rect = button.getBoundingClientRect()
+      if (!button.isConnected || !rect.width || rect.bottom <= 0 || rect.top >= window.innerHeight) onClose()
     }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
-    }
-    document.addEventListener('pointerdown', onPointerDown, true)
-    document.addEventListener('keydown', onKeyDown)
+    window.addEventListener('scroll', check, true)
+    window.addEventListener('resize', check)
     return () => {
-      document.removeEventListener('pointerdown', onPointerDown, true)
-      document.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('scroll', check, true)
+      window.removeEventListener('resize', check)
     }
-  }, [anchor, onClose])
+  }, [button, onClose])
 
   // 卸载时把拖动会话收干净（旧实现在这条路上会漏：监听与 body 类要等下一次 pointerup 才摘掉）。
   // 拖动期间已经改过内存里的顺序（拖动只重画、不写盘），所以补一次 commit —— 不补的话内存与
@@ -527,7 +504,7 @@ function ColSettingsPanel({ spec, anchor, repaintRef, onClose }: PanelProps) {
     dragSessionRef.current?.teardown() // 理论上不会有上一段没收的会话，兜一手
     setDraggingKey(key)
     document.body.classList.add(DRAGGING_CLASS)
-    const card = cardRef.current
+    const rows = rowsRef.current
 
     function teardown(): void {
       window.removeEventListener('pointermove', onMove)
@@ -538,7 +515,7 @@ function ColSettingsPanel({ spec, anchor, repaintRef, onClose }: PanelProps) {
     }
 
     function onMove(moveEvent: PointerEvent): void {
-      const overKey = rowKeyAt(moveEvent.clientX, moveEvent.clientY, card, spec.config)
+      const overKey = rowKeyAt(moveEvent.clientX, moveEvent.clientY, rows, spec.config)
       if (!overKey || overKey === key) return
       const from = spec.config.findIndex(item => item.key === key)
       const to = spec.config.findIndex(item => item.key === overKey)
@@ -558,87 +535,101 @@ function ColSettingsPanel({ spec, anchor, repaintRef, onClose }: PanelProps) {
   }
 
   return (
-    <div
-      ref={cardRef}
-      role='dialog'
-      aria-label={`${spec.label || spec.id}的列设置`}
-      // 定位与层级：fixed + 逐次量的 left/top（照抄旧算法）。z-[35] 与旧 .colset-panel 同档：
-      // 压过弹窗遮罩（30），轻提示（40）仍在它上面 —— 表在弹窗里也要能调列
-      style={{ left: pos?.left ?? 0, top: pos?.top ?? 0, visibility: pos ? undefined : 'hidden' }}
-      className={cn(
-        'fixed z-[35] flex max-h-[min(70vh,560px)] w-[336px] flex-col',
-        'overflow-hidden rounded-lg border border-border-strong bg-raised shadow-3',
-        // 入场：淡入 + 轻微上移收一点（旧 .colset-panel 的 colset-in 动画同款观感）
-        'animate-in fade-in-0 zoom-in-[.985] slide-in-from-top-1 duration-150',
-      )}
+    <Popover
+      open
+      // 非模态（Base UI 的默认档）：面板不该有遮罩、不该锁滚动 —— 它是「看着表格调表格」的浮层
+      modal={false}
+      // 收起的出口：点按钮（同表再点一次，走 makeButton 的处理器）、点面板外、Esc
+      // 都汇到这里。eventDetails 只在「点面板外」时要 —— 把那次 click 记下来，
+      // 好让按钮自己的处理器认出「这一下就是我」，不再把面板开回去（见文件头）
+      onOpenChange={(next, eventDetails) => {
+        if (next) return
+        if (eventDetails?.reason === 'outside-press') outsidePressEvent = eventDetails.event ?? null
+        onClose()
+      }}
     >
-      {/* 表头：与数据行同一套网格，四列依次是 手柄 / 列名 / 显示 / 对齐 */}
-      <div
-        className={cn(
-          ROW_GRID,
-          'border-b border-hairline px-3 pt-[9px] pb-[7px]',
-          'text-[10.5px] font-semibold tracking-[.05em] text-muted-foreground',
-        )}
+      <PopoverContent
+        // 贴锚点右下：align='end' = 浮层右缘对齐按钮右缘、side='bottom' = 排在按钮下方，
+        // sideOffset 是旧算法的 6px 间距；贴边收 8px 用 collisionPadding 表达（= 旧算法的 EDGE）。
+        // 翻向由 floating-ui 的 flip 决定，差别见文件头。
+        // 锚点直接用那颗命令式按钮：没有 Trigger，所以要用 anchor 显式告诉浮层贴谁。
+        // 层级（z-[35]）与卡片观感（底 / 描边 / 阴影 / 圆角 / 最大高度）都在组件库里
+        anchor={button}
+        side='bottom'
+        align='end'
+        sideOffset={6}
+        collisionPadding={8}
+        className='w-[336px]'
+        aria-label={`${spec.label || spec.id}的列设置`}
       >
-        <span />
-        <span className='text-center'>列</span>
-        <span className='text-center'>显示</span>
-        <span className='text-center'>对齐</span>
-      </div>
+        {/* 表头：与数据行同一套网格，四列依次是 手柄 / 列名 / 显示 / 对齐 */}
+        <div
+          className={cn(
+            ROW_GRID,
+            'border-b border-hairline px-3 pt-[9px] pb-[7px]',
+            'text-[10.5px] font-semibold tracking-[.05em] text-muted-foreground',
+          )}
+        >
+          <span />
+          <span className='text-center'>列</span>
+          <span className='text-center'>显示</span>
+          <span className='text-center'>对齐</span>
+        </div>
 
-      {/* 行区滚动：列多时面板不跟着长，最大高度由外层的 max-h 兜底 */}
-      <div className='min-h-0 flex-1 overflow-y-auto px-3 py-1'>
-        {spec.config.map(item => {
-          const label = labelOf(spec, item.key)
-          const dragging = draggingKey === item.key
-          return (
-            <div
-              key={item.key}
-              data-col-key={item.key}
-              className={cn(
-                ROW_GRID,
-                'rounded-sm py-[5px] hover:bg-nav-hover',
-                // 被拖动的那一行压淡：让下面的落点更醒目。节点本身不参与重排
-                //（重排是数据层的事 + repaint，见 startDrag）
-                dragging && 'opacity-50',
-              )}
-            >
-              <span
-                className='flex cursor-grab items-center justify-center text-muted-foreground opacity-50 hover:opacity-100'
-                title='按住拖动调整列顺序'
-                onPointerDown={event => startDrag(item.key, event)}
+        {/* 行区滚动：列多时面板不跟着长，最大高度由外层（组件库）的 max-h 兜底 */}
+        <div ref={rowsRef} className='min-h-0 flex-1 overflow-y-auto px-3 py-1'>
+          {spec.config.map(item => {
+            const label = labelOf(spec, item.key)
+            const dragging = draggingKey === item.key
+            return (
+              <div
+                key={item.key}
+                data-col-key={item.key}
+                className={cn(
+                  ROW_GRID,
+                  'rounded-sm py-[5px] hover:bg-nav-hover',
+                  // 被拖动的那一行压淡：让下面的落点更醒目。节点本身不参与重排
+                  //（重排是数据层的事 + repaint，见 startDrag）
+                  dragging && 'opacity-50',
+                )}
               >
-                {GRIP_ICON}
-              </span>
-              <span className='min-w-0 truncate text-xs text-foreground' title={label}>
-                {label}
-              </span>
-              <Switch
-                className='justify-self-center'
-                checked={item.visible}
-                onCheckedChange={next => setVisible(item.key, next)}
-                aria-label={`显示「${label}」列`}
-                title={item.visible ? '这一列正在显示' : '这一列已隐藏'}
-              />
-              <SegmentedControl
-                className='w-full justify-center'
-                options={ALIGNS}
-                value={item.align}
-                onValueChange={next => setAlign(item.key, next)}
-                aria-label={`「${label}」列的对齐`}
-              />
-            </div>
-          )
-        })}
-      </div>
+                <span
+                  className='flex cursor-grab items-center justify-center text-muted-foreground opacity-50 hover:opacity-100'
+                  title='按住拖动调整列顺序'
+                  onPointerDown={event => startDrag(item.key, event)}
+                >
+                  {GRIP_ICON}
+                </span>
+                <span className='min-w-0 truncate text-xs text-foreground' title={label}>
+                  {label}
+                </span>
+                <Switch
+                  className='justify-self-center'
+                  checked={item.visible}
+                  onCheckedChange={next => setVisible(item.key, next)}
+                  aria-label={`显示「${label}」列`}
+                  title={item.visible ? '这一列正在显示' : '这一列已隐藏'}
+                />
+                <SegmentedControl
+                  className='w-full justify-center'
+                  options={ALIGNS}
+                  value={item.align}
+                  onValueChange={next => setAlign(item.key, next)}
+                  aria-label={`「${label}」列的对齐`}
+                />
+              </div>
+            )
+          })}
+        </div>
 
-      <div className='flex items-center gap-2 border-t border-hairline px-3 pt-2 pb-[9px]'>
-        <span className='flex-1 text-[11px] text-muted-foreground'>拖动 ⋮⋮ 调整顺序</span>
-        <Button variant='outline' size='sm' onClick={resetAll}>
-          恢复默认
-        </Button>
-      </div>
-    </div>
+        <div className='flex items-center gap-2 border-t border-hairline px-3 pt-2 pb-[9px]'>
+          <span className='flex-1 text-[11px] text-muted-foreground'>拖动 ⋮⋮ 调整顺序</span>
+          <Button variant='outline' size='sm' onClick={resetAll}>
+            恢复默认
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }
 
@@ -738,15 +729,27 @@ function syncStaticHead(
 /**
  * 「列设置」触发按钮：照旧用命令式建原生按钮并插进 legacy 页面骨架（理由见文件头）。
  * 齿轮图标来自 icons.js（运行期读 wbIcons），与旧实现逐字一致。
+ *
+ * 它同时就是浮层的锚点（PopoverContent 的 anchor 收它），所以不必再套包裹层。
  */
-function makeButton(spec: TableEntry): HTMLButtonElement {
+function makeButton(spec: TableEntry): Anchor {
   const button = document.createElement('button')
   button.type = 'button'
   button.className = `sm colset-btn${spec.buttonClass ? ` ${spec.buttonClass}` : ''}`
   button.id = `btn-colset-${spec.id}`
   button.title = `调整「${spec.label || spec.id}」的列：显示 / 隐藏、顺序、对齐`
   button.innerHTML = `${shared().wbIcons?.icon?.('settings', 14) || ''}<span>列设置</span>`
-  button.addEventListener('click', () => togglePanel(spec, button))
+  button.setAttribute('aria-haspopup', 'dialog')
+  button.setAttribute('aria-expanded', 'false')
+  button.addEventListener('click', event => {
+    // 面板开着时点这颗按钮：Base UI 已在捕获阶段把它判成「点面板外」并关了窗，
+    // 这一次冒泡到这里只需认领标记、不再开回去（否则按钮按下去关不掉，见文件头）
+    if (outsidePressEvent === event) {
+      outsidePressEvent = null
+      return
+    }
+    togglePanel(spec, button)
+  })
   return button
 }
 
