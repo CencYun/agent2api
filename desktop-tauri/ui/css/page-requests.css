@@ -129,11 +129,25 @@
   color: var(--warn);
 }
 
+/* 排队中：既不是失败（不取 warn）也不是正常推进（不取 ok），
+   用「信息」档的紫蓝，与「等待响应」的青蓝区分开 */
+.badge.tag.phase-queued {
+  background: oklch(0.62 0.14 285 / 12%);
+  border-color: oklch(0.62 0.14 285 / 32%);
+  color: oklch(0.5 0.16 290);
+}
+
 @media (prefers-color-scheme: dark) {
   .badge.tag.phase-waiting {
     background: oklch(0.72 0.11 200 / 15%);
     border-color: oklch(0.72 0.11 200 / 34%);
     color: oklch(0.8 0.1 200);
+  }
+
+  .badge.tag.phase-queued {
+    background: oklch(0.72 0.13 285 / 15%);
+    border-color: oklch(0.72 0.13 285 / 34%);
+    color: oklch(0.82 0.12 288);
   }
 }
 

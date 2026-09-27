@@ -35,6 +35,7 @@ import {
   CATEGORIES,
   NO_RETRY_CODES_KEY,
   PROMPT_MODES,
+  QUEUE_FIELDS,
   RETENTION_FIELDS,
   RETRY_CODE_MAX,
   RETRY_CODE_MIN,
@@ -68,6 +69,7 @@ export type BusyScope =
   | 'retry'
   | 'codes'
   | 'timeouts'
+  | 'queue'
   | 'debug'
   | 'sanitize'
   | 'prompt'
@@ -141,6 +143,7 @@ export type SettingsSnapshot = {
   /** 「指定错误码直接换号」名单；retry.status 为 unavailable 时是 null */
   retryCodes: number[] | null
   timeouts: NumericState
+  queue: NumericState
   debug: DebugState
   sanitize: SanitizeState
   prompt: PromptState
@@ -170,6 +173,7 @@ const INITIAL: SettingsSnapshot = {
   retry: { status: 'loading', values: null },
   retryCodes: null,
   timeouts: { status: 'loading', values: null },
+  queue: { status: 'loading', values: null },
   debug: { status: 'loading', on: false, count: null, limit: null },
   sanitize: { status: 'loading', on: false },
   prompt: {
@@ -560,7 +564,7 @@ async function commitRetention(field: NumberField, days: number, shrinking: bool
  * 直接换号」名单）由各自的代码实现，在数据到达 / 不可用时被回调一次。
  */
 type NumericPanel = {
-  scope: 'retry' | 'timeouts'
+  scope: 'retry' | 'timeouts' | 'queue'
   fields: NumberField[]
   consoleLabel: string
   /** 取数 / 写回：桥不在时给 undefined（各调用点按「读不到」处理） */
@@ -617,6 +621,30 @@ async function saveNumericField(panel: NumericPanel, field: NumberField, raw: st
   } finally {
     endBusy()
   }
+}
+
+/* ─── 排队等待 ─────────────────────────────── */
+
+const queuePanel: NumericPanel = {
+  scope: 'queue',
+  fields: QUEUE_FIELDS,
+  consoleLabel: '读取排队等待设置',
+  get: () => shared().workbuddyDesktop?.getQueue(),
+  save: patch => shared().workbuddyDesktop?.saveQueue(patch),
+  read: () => snapshot.queue,
+  write: state => publish({ queue: state }),
+}
+
+export function renderQueue(data?: unknown): void {
+  renderNumericPanel(queuePanel, data)
+}
+
+export async function loadQueue(): Promise<void> {
+  await loadNumericPanel(queuePanel)
+}
+
+export async function saveQueueField(field: NumberField, raw: string): Promise<void> {
+  await saveNumericField(queuePanel, field, raw)
 }
 
 /* ─── 请求重试 ─────────────────────────────── */
@@ -1004,6 +1032,7 @@ export async function load(): Promise<void> {
     loadRetention(),
     loadRetry(),
     loadTimeouts(),
+    loadQueue(),
     loadDebug(),
     loadSanitize(),
     loadPrompt(),
@@ -1029,6 +1058,11 @@ export async function refreshRetry(): Promise<void> {
 export async function refreshTimeouts(): Promise<void> {
   await loadTimeouts()
   toast('超时设置已刷新')
+}
+
+export async function refreshQueue(): Promise<void> {
+  await loadQueue()
+  toast('排队等待设置已刷新')
 }
 
 export async function refreshDebug(): Promise<void> {

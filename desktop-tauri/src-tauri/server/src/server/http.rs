@@ -220,6 +220,13 @@ pub fn panel_router(state: ServerState) -> Router {
             "/api/timeouts",
             get(api::timeouts_api::get_timeouts).put(api::timeouts_api::put_timeouts),
         )
+        // 排队等待（次数 / 单次秒数）：走排队制的上游（目前是 Qoder 免费模型）
+        // 在模型繁忙时回报「建议 N 秒后再来」，转发层据此退避重发几次。
+        // 与 /api/timeouts 同一模式：保存后对下一个请求立即生效。
+        .route(
+            "/api/queue",
+            get(api::queue_api::get_queue).put(api::queue_api::put_queue),
+        )
         // ── 调试模式（设置页「通用 → 调试模式」）──
         // GET/PUT 开关；traffic 是按 id 取原始报文的详情端点（列表接口不返回
         // 报文，见 debug_api 的模块头）。挂 protected：报文含上游 URL 与请求体。

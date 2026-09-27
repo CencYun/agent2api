@@ -159,6 +159,7 @@ const PHASES: Record<string, { label: string; cls: string }> = {
   waiting: { label: '等待响应', cls: 'phase-waiting' },
   streaming: { label: '响应中', cls: 'phase-streaming' },
   retrying: { label: '重试中', cls: 'phase-retrying' },
+  queued: { label: '排队中', cls: 'phase-queued' },
 }
 const PHASE_FALLBACK_LABEL = '进行中'
 const PHASE_FALLBACK_CLS = 'running'
@@ -168,6 +169,7 @@ const PHASE_TITLES: Record<string, string> = {
   waiting: '上游请求已发出，正在等第一个字节到达（模型的思考时间也在这段）',
   streaming: '首帧已到，上游内容正在下发',
   retrying: '本轮尝试失败，正在退避等待或切换到下一个账号',
+  queued: '上游模型繁忙，请求已排进上游队列；网关正按上游建议的时长等待后重发（不是登录态或额度问题）',
   '': '请求正在转发中，用时列显示的是已用时',
 }
 
@@ -1047,10 +1049,29 @@ function RequestsPage() {
    */
   React.useLayoutEffect(() => {
     ensureColumns()
-    // 注册成功（或 table-columns.js 已就绪）就按配置校准一次轨道与把手
-    shared().wbTableColumns?.repaint?.('requests')
     setColumnsVersion(version => version + 1)
   }, [])
+
+  /**
+   * 表头一出现（或换了一组列）就补一次把手与轨道。
+   *
+   * 为什么不能只在挂载时补一次 —— 这是踩过的坑：本岛首帧必然没有表头，拿到数据之前
+   * 列表位置渲染的是空态（`.log-empty`），而列宽把手要插进表头格里。挂载时的 repaint
+   * 落在数据回来之前，空转一次就再没有第二次；而 table-columns.js 加载期注册那一刻
+   * `#req-list` 也还不存在（本岛首帧是异步提交的），它那边同样空转 —— 连「重绘后补一次」
+   * 的观察者都没装上（观察者也要先拿到 root）。两头都空转，于是整张表永远拖不动。
+   *
+   * 依赖取「表头在不在 + 列集合」而不是每次渲染都调：表头元素会被 React 复用
+   * （同 key 同类型，实测数据刷新不会换节点），把手插进去之后一直在；只有它
+   * 出现 / 消失 / 换列时才需要重补。改对齐不算 —— 那改的是 className，动不到子节点。
+   */
+  const headSignature = data.error || !data.entries.length
+    ? ''
+    : visibleColumns().map(column => column.key).join('|')
+  React.useLayoutEffect(() => {
+    if (!headSignature) return
+    shared().wbTableColumns?.repaint?.('requests')
+  }, [headSignature])
 
   /**
    * 轮询定时器：配置一变就重排（旧实现的 startAuto 每次先 stopAuto），卸载时清表。三个前置条件

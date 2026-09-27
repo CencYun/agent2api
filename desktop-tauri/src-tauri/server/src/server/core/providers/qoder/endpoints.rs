@@ -78,10 +78,37 @@ impl Region {
     /// 它同时承载模型目录（`algo/api/v2/model/list`）与对话
     /// （`algo/api/v2/service/pro/sse/agent_chat_generation`）——
     /// 两者走同一套 COSY 签名（见 `cosy.rs`），所以共用这一个基址。
+    /// **注意**：对话链路还有一台按令牌分流的主机，见 [`Self::inference_base`]。
     pub fn gateway(self) -> &'static str {
         match self {
             Self::Global => "https://api3.qoder.sh/",
             Self::Cn => "https://gateway.qoder.com.cn/",
+        }
+    }
+
+    /// **对话链路**实际使用的推理基址：国际版的作业令牌要走 `api2`。
+    ///
+    /// ── 为什么按令牌前缀分流（这不是取舍，是上游的约束）──────────
+    /// 国际版有两台推理主机：`api3.qoder.sh` 认设备流令牌（`dt-`），
+    /// `api2.qoder.sh` 才认 PAT 换来的作业令牌（`jt-`）—— 把 `jt-` 打到
+    /// api3 会被判「Login expired」（403）。官方 qodercli 也是这么分的：
+    /// PAT 先换作业令牌、再走 api2。中国版只有一台网关
+    /// （`gateway.qoder.com.cn`），两种令牌都收，不需要分流。
+    ///
+    /// 依据：9router 的 `qoderInferenceBase`（注释写明「Job-token (jt-...)
+    /// traffic must hit api2.qoder.sh — api3 rejects jt- with "Login expired"」）、
+    /// CLIProxyAPI 的 qoder2api 插件同款分流、OmniRoute 的 issue #4683。
+    /// 官方文档也把 api1 / api2 / api3 三台主机都列为可连通主机。
+    pub fn inference_base(self, access_token: &str) -> &'static str {
+        match self {
+            Self::Cn => "https://gateway.qoder.com.cn/",
+            Self::Global => {
+                if access_token.starts_with("jt-") {
+                    "https://api2.qoder.sh/"
+                } else {
+                    "https://api3.qoder.sh/"
+                }
+            }
         }
     }
 }

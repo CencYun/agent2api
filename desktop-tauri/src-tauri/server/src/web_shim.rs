@@ -667,6 +667,12 @@ pub fn shim_js() -> &'static str {
     // ── 请求重试 ──
     getRetry: function () { return call('GET', '/api/retry'); },
     saveRetry: function (patch) { return call('PUT', '/api/retry', patch); },
+    // ── 上游请求超时（四项）──
+    getTimeouts: function () { return call('GET', '/api/timeouts'); },
+    saveTimeouts: function (patch) { return call('PUT', '/api/timeouts', patch); },
+    // ── 排队等待（次数 / 单次秒数）──
+    getQueue: function () { return call('GET', '/api/queue'); },
+    saveQueue: function (patch) { return call('PUT', '/api/queue', patch); },
 
     // ── 调试模式 ──
     getDebug: function () { return call('GET', '/api/debug'); },

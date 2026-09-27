@@ -491,7 +491,7 @@ ALTER TABLE requests ADD COLUMN upstream_reasoning TEXT NOT NULL DEFAULT '';
 /// ── 存什么 ──────────────────────────────────────────────────
 ///   - `phase`：该请求当前所处的转发阶段，取值是 `core::upstream::usage::
 ///     LogPhase` 的四个字面量（`connecting` 连接中 / `waiting` 等待响应 /
-///     `streaming` 响应中 / `retrying` 重试中）；空串 = 不在途（终态行、
+///     `streaming` 响应中 / `retrying` 重试中 / `queued` 排队中）；空串 = 不在途（终态行、
 ///     旧行、以及转发前就失败从未插入过在途行的行）。
 ///   - `phase_started_at`：**进入当前阶段**的时刻（毫秒时间戳，与 `ts`
 ///     同一口径）。阶段计时（请求日志状态列第二行）由它算出来。
