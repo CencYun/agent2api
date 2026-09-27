@@ -66,6 +66,7 @@ const PROVIDER_ICONS: Record<string, string> = {
   'accio-cn': 'assets/providers/accio.png',
   zcode: 'assets/providers/zcode.png',
   'zcode-intl': 'assets/providers/zcode.png',
+  trae: 'assets/providers/trae.png',
 }
 
 type CardItem = {
