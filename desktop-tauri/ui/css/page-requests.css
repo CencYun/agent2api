@@ -30,8 +30,9 @@
 
    --req-cols 是用户拖过的列宽（table-columns.js 写在 #req-list 上，靠继承
    作用到每一行 —— 表格是整体重绘的，变量不需要在渲染后再写一遍）：
-   拖过哪一列，那一条轨道就从 minmax(…fr) 换成固定像素，没拖过的仍是弹性权重，
-   于是这一行永远填满、不滚动、不留空。变量没设时走下面的默认值，
+   拖过哪一列，那一条轨道就从 minmax(…fr) 换成固定像素，没拖过的仍是弹性权重。
+   拖动只改被拖的那一列，其余列保持各自宽度；总宽超出容器就由下面的横向滚动
+   接手（列宽是绝对量，不做「按比例分完容器」那套）。变量没设时走下面的默认值，
    改默认列宽时与 table-columns.js 里对应列的 track 字段要同步。 */
 .req-row,
 .req-head {
@@ -63,6 +64,24 @@
 
 /* 表头格子是列宽把手的定位锚（.col-grip 绝对定位挂在它内側右缘，见 components.css） */
 .req-head > span { position: relative; }
+
+/* ── 横向滚动 ──────────────────────────────────────────────
+   拖动把列拖宽、或窗口窄到装不下所有列时，让列表横向滚动，而不是把列压没：
+   不会伸缩的列（时间 / 重试 / 详情，以及被拖过的那些）压不动时只能滚。
+
+   行宽下限由 table-columns.js 按「不会伸缩的列之和 + 列间距 + 左右内边距」算好，
+   写在 #req-list 的 --req-row-min 上：固定列把容器占满时，行与表头跟着撑到内容
+   宽，溢出那截才有背景与下边框（否则横向滚到右边，表头会缺一块、行底色只铺
+   半截）；不溢出时它正好等于容器宽，与 min-width: 100% 等效。
+
+   **不要改成 CSS 的 max-content**：那是按内容的固有宽度算的，同一列在表头
+   （「用量」两个字）和数据行（两行读数）里会算出两个宽度，表头与数据直接错位，
+   而且列被内容撑开就不再触发省略号。 */
+#req-list { overflow-x: auto; }
+#req-list > .req-row,
+#req-list > .req-head {
+  min-width: var(--req-row-min, 100%);
+}
 
 .req-row { border-bottom: 1px solid var(--hairline); transition: background .12s ease; }
 .req-row:last-child { border-bottom: none; }
@@ -171,10 +190,14 @@
 
 /* 阶段计时：等宽 + tabular-nums，相邻行的秒数竖着能直接比大小 */
 .req-row .req-status-line {
+  overflow: hidden;
+  /* 与 .req-usage-line 同一条道理：flex 子项不限宽就会被内容顶开、压到隔壁列 */
+  max-width: 100%;
   color: var(--text-3);
   font-family: var(--font-mono);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -333,6 +356,11 @@
 
 .req-usage-line {
   overflow: hidden;
+  /* 必须限住宽度：它是 .req-usage（flex 列）的子项，只写 overflow: hidden 时
+     宽度仍按内容算（读数一行 nowrap，两百多像素），顶出格子压到右边列上 ——
+     列再窄也不会出现省略号。这里跟 .req-model-line / .req-dur-line 用同一个
+     写法（max-width: 100%）；单写 min-width: 0 实测压不住。 */
+  max-width: 100%;
   color: var(--text-2);
   font-family: var(--font-mono);
   font-size: 11px;
