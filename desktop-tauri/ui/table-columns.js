@@ -7,15 +7,18 @@
  *
  * ── 为什么另起一份，不并进 accounts-columns.js ──────────────────
  * 账号表的列宽是一组写死的像素预算（九个定宽列 + 账号列吃剩余），拖宽之后整张表
- * 横向滚动 —— 那是「表格不压缩列宽」那条取舍的代价，语义与这里不同，合起来只会
- * 互相牵制。这里三张表的列宽是**相对**的（CSS 给百分数 / fr）：
- * 拖动只把被拖的那一列钉成像素，其余列按原权重分掉剩下的宽度。
+ * 横向滚动。这里三张表的默认列宽是**相对**的（CSS 给百分数 / fr）：拖动只把被拖
+ * 的那一列钉成像素，其余列保持原样 —— 没拖过的弹性列按权重分掉剩下的宽度，装不
+ * 下就整张表横向滚动。列宽是绝对量：我调的是这一列，别的列不该跟着动。
+ *
+ * ── 别把拖动写成「重新分配」（踩过）──────────────────────────
+ * 曾经让其余列在被拖列变宽时按比例让位，好把总宽维持在容器内。结果拖宽一列就得
+ * 从别处扣：拖前面的列后面的变窄、拖后面的列前面的变窄，两边互相牵制，**永远
+ * 拖不宽**。要滚动就让它滚，比互相挤压好解释得多。
  *
  * ── 实测过的两条事实（Chrome，table-layout: fixed）──────────────
  * · 全是 px 且总和小于容器 → 浏览器按原比例放大填满，不会留空；
  * · px 与 % 混用 → % 列按权重吃掉剩余宽度，只有 px 列本身超宽时表格才横向滚动。
- * 所以「拖宽一列 = 其余列按比例让位」是可靠的：不滚动、不留空，且拖动过程中
- * 列边界严格跟着光标（其余列彼此的比例不动，只是整体缩放到剩余宽度）。
  *
  * ── 两种表格形态 ──────────────────────────────────────────────
  * · table 模式（模型管理 / 网关 Key）：<table> + <colgroup>，宽度写回 <col>。
@@ -37,6 +40,9 @@
 
   /** 拖动的下限：再窄就该点不准里面的控件了（与账号表同一个值） */
   const MIN_WIDTH = 56;
+
+  /** 默认轨道写成纯像素的才算「钉死」；fr / % 这类会跟着容器变的都不算 */
+  const FIXED_TRACK = /^(\d+(?:\.\d+)?)px$/;
 
   const GRIP_CLASS = 'col-grip';
   const GRIP_HTML = `<span class="${GRIP_CLASS}" title="拖动调整列宽（双击还原）"></span>`;
@@ -86,6 +92,8 @@
       root: '#req-list',
       head: '.req-head',
       varName: '--req-cols',
+      /** 行宽下限的变量名（见 rowSpanOf）：行与表头靠它撑到内容宽，溢出那截才有背景 */
+      spanVar: '--req-row-min',
       columns: [
         { key: 'time', sel: '.req-time', track: '92px' },
         { key: 'target', sel: '.req-target', track: 'minmax(0, 1.1fr)' },
@@ -105,7 +113,7 @@
        */
       columnsOf: visibleColumnsOf(() => window.wbRequestsPanel?.visibleColumns?.()),
     },
-    // 「获取模型」弹窗的表（models-fetch-modal.js 动态创建，关闭即移除）。
+    // 「获取模型」弹窗的表（islands/models-fetch-modal.tsx 动态创建，关闭即移除）。
     // 两个形态各一张表、各存一份列宽：列集合不同（内置家六列 / 自定义家三列），
     // 混用一份覆盖值会让「拖过的 provider 列宽」串到自定义家去（那边没有这列）。
     // 初始化时表还不存在（弹窗未开）→ 这三个函数都按「找不到 root」空转，
@@ -163,7 +171,7 @@
     return root.querySelector(`${table.head} > ${column.sel}`);
   }
 
-  /** 可供各列排布的宽度：表格模式取表格自身，网格模式取轨道空间 */
+  /** 可供各列排布的宽度：表格模式取表格自身，网格模式取**列表容器**的可视宽 */
   function trackSpace(table, root) {
     if (table.mode === 'table') return root.getBoundingClientRect().width;
     const head = root.querySelector(table.head);
@@ -172,7 +180,10 @@
     // 列间距不参与分列，必须扣掉：算漏了就会拖出一条横向滚动条。
     // 缝隙数是**当前可见列**减一（藏列之后轨道也跟着少，见 activeColumns）。
     const gap = (parseFloat(style.columnGap) || 0) * Math.max(0, activeColumns(table).length - 1);
-    return head.clientWidth
+    // 量列表容器而不是表头自身：表头在溢出时会被 --req-row-min 撑到内容宽
+    // （见 page-requests.css 的 #req-list），拿它的 clientWidth 会把溢出那一截
+    // 也算成「可用宽度」，上限跟着虚高。容器是滚动容器，clientWidth 只含可视区。
+    return root.clientWidth
       - (parseFloat(style.paddingLeft) || 0)
       - (parseFloat(style.paddingRight) || 0)
       - gap;
@@ -223,11 +234,17 @@
       && columns.every((column, index) => column === table.columns[index]);
     if (untouched && !columns.some(column => overrides[column.key])) {
       root.style.removeProperty(table.varName);
-      return;
+    } else {
+      root.style.setProperty(table.varName, columns
+        .map(column => (overrides[column.key] ? `${overrides[column.key]}px` : column.track))
+        .join(' '));
     }
-    root.style.setProperty(table.varName, columns
-      .map(column => (overrides[column.key] ? `${overrides[column.key]}px` : column.track))
-      .join(' '));
+    // 行宽下限单独算，与「拖没拖过」无关：没拖过也可能溢出（默认轨道里的定宽列
+    // 加起来就超了）。固定列占满容器时行与表头要跟着撑到内容宽，溢出那截才有
+    // 背景与下边框 —— 否则横向滚动到右边，表头会缺一块、行的底色也只铺半截。
+    if (table.spanVar) {
+      root.style.setProperty(table.spanVar, rowSpanOf(table, root, columns) + 'px');
+    }
   }
 
   /**
@@ -264,20 +281,61 @@
   // ─── 拖动 ────────────────────────────────────
 
   /**
-   * 让位列要占掉的宽度（拖动时被拖的那一列必须为它们留出来）：
+   * 其余列至少要占掉的宽度（只给 table 模式的宽度上限用）：
    * · 拖过的列 → 它自己的像素值，已经钉死；
-   * · 没拖过、但默认轨道本身就是固定像素的列（请求日志的时间 / 重试 / 状态 / 用时）→
-   *   轨道不参与伸缩，也按它的像素值扣（这一条漏了会拖出横向滚动条）；
-   * · 其余（表格模式的百分数列、网格模式的 fr 列）→ 只留 MIN_WIDTH 兜底：
-   *   它们会被按比例压扁，但不能压到看不见。
+   * · 没拖过、但默认轨道本身就是固定像素的列 → 也按它的像素值扣；
+   * · 其余（表格模式的百分数列）→ 只留 MIN_WIDTH 兜底：会被按比例压扁，
+   *   但不能压到看不见。
+   * grid 模式不用它 —— 那儿的列宽是绝对量，超出容器交给横向滚动。
    */
   function reservedOf(table, column) {
-    const fixed = /^(\d+(?:\.\d+)?)px$/.exec(table.mode === 'grid' ? column.track : '');
+    const fixed = FIXED_TRACK.exec(table.mode === 'grid' ? column.track : '');
     return fixed ? Math.max(MIN_WIDTH, Math.round(parseFloat(fixed[1]))) : MIN_WIDTH;
   }
 
-  /** 被拖这一列的宽度上限（others 按**可见列**算，藏起来的列不占宽度） */
+  /** 默认轨道里的像素值（弹性轨道没有，返回 0） */
+  function fixedPxOf(table, column) {
+    const fixed = FIXED_TRACK.exec(table.mode === 'grid' ? column.track || '' : '');
+    return fixed ? Math.round(parseFloat(fixed[1])) : 0;
+  }
+
+  /**
+   * 一行至少要占多宽：把不会伸缩的列加起来（有覆盖值的 + 默认轨道写死像素的），
+   * 再补上列间距与左右内边距。有弹性列吃剩余空间时它就是容器可视宽；弹性列被
+   * 压到 0 之后才是这个值 —— 也就是表格真正溢出、该横向滚动的那一刻。
+   *
+   * 行与表头都拿它当 min-width。**不能**改用 CSS 的 max-content 顶这件事：那是
+   * 按内容的固有宽度算的，同一列在表头（「用量」两个字）和数据行（两行读数）里
+   * 会算出两个宽度，表头与数据直接错位；而且列被内容撑开就不再触发省略号。
+   */
+  function rowSpanOf(table, root, columns) {
+    const { overrides } = stateOf(table);
+    let fixed = 0;
+    for (const column of columns) fixed += overrides[column.key] || fixedPxOf(table, column);
+    const head = root.querySelector(table.head);
+    const style = head ? getComputedStyle(head) : null;
+    const gap = style ? (parseFloat(style.columnGap) || 0) * Math.max(0, columns.length - 1) : 0;
+    const padding = style
+      ? (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0)
+      : 0;
+    return Math.max(root.clientWidth, fixed + gap + padding);
+  }
+
+  /**
+   * 被拖这一列的宽度上限。
+   *
+   * grid 模式**不设「容器宽度」这种硬墙**：列宽是绝对量，拖多宽就多宽，装不下的
+   * 部分交给整张表横向滚动。上限只做防呆，取两倍可用宽度（再宽就该拆列或者换
+   * 窗口了）。
+   * 原先这里算的是「其余列按各自的预留下限占掉之后还剩多少」，而不会伸缩的列
+   * 本身就能把容器占满 —— 差值恒为负、上限退化成当前宽度，拖动整个失效（请求
+   * 日志「错误列拖不动」就是这一条）。
+   *
+   * table 模式（模型管理 / 网关 Key）的其余列是百分数，会跟着被拖列自动让位，
+   * 所以仍按预留下限算，行为与接入前一致。
+   */
   function limitOf(table, total, key, startWidth) {
+    if (table.mode === 'grid') return Math.max(MIN_WIDTH, Math.round(total * 2), Math.round(startWidth));
     const { overrides } = stateOf(table);
     const others = activeColumns(table).reduce((sum, column) => (
       column.key === key ? sum : sum + (overrides[column.key] || reservedOf(table, column))
@@ -288,9 +346,22 @@
 
   const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 
-  /** 落一次宽度：写内存 → 立即重画（拖动中每帧都调，所以只改被拖的那一列） */
+  /**
+   * 落一次宽度：写内存 → 立即重画（拖动中每帧都调）。
+   *
+   * **只动被拖的那一列**，其余列一律保持各自宽度 —— 这是这张表本来就该有的语义：
+   * 我调的是这一列，别的列不该跟着动；超出容器的部分交给整张表横向滚动（与账号表
+   * 同一条取舍：表格不压缩列宽）。
+   *
+   * 曾经把它写成「重排」：拖动时按比例压缩其余列、把总宽维持在容器内。那样拖宽
+   * 一列就得从别处扣，拖前面的列后面的变窄、拖后面的列前面的变窄，两边互相牵制，
+   * 结果是**永远拖不宽**。列宽是绝对量，不是一份要按比例分完的预算。
+   *
+   * 弹性列（没拖过的 fr 列）仍由 CSS 按权重吃剩余空间：空间不足时它先被压到 0，
+   * 那是它的本分，不算被挤窄。
+   */
   function applyWidth(table, key, width) {
-    stateOf(table).overrides[table.columns.find(column => column.key === key)?.key || key] = Math.round(width);
+    stateOf(table).overrides[key] = Math.round(width);
     paint(table);
   }
 
@@ -334,7 +405,8 @@
 
       const startX = event.clientX;
       const startWidth = grip.parentElement.getBoundingClientRect().width;
-      const limit = limitOf(table, trackSpace(table, root), column.key, startWidth);
+      const total = trackSpace(table, root);
+      const limit = limitOf(table, total, column.key, startWidth);
       grip.classList.add('active');
       document.body.classList.add('col-resizing');
       // 捕获失败（合成事件、老内核）不影响功能：全局监听那条路照旧
@@ -378,13 +450,16 @@
   }
 
   /**
-   * 请求日志是整块重绘出来的（每次刷新都换掉表头与全部行），重绘后补一次
-   * 把手与轨道。
+   * 给「注册时 root 还不存在」的表补上重绘观察者 —— 表的渲染方每重建一次表头都会
+   * 把把手一起换掉，不看着点就再也补不回来。
    *
-   * 轨道（`--req-cols`）也得跟着重算，不能只在注册时算一次：本文件比
-   * requests-panel.js **先加载**，注册那一刻读不到「用户可见哪些列」，
-   * 只能按全集算一遍；而面板首屏/每次刷新渲染出的是配置后的列集合。
-   * 第一次重绘后立刻校准，从此两者一致。
+   * **前提是 root 已经在了**（这里先查一遍）。root 在注册那一刻不存在时，本文件
+   * 自己能做的都做完了（paint / paintGrips / bind / watch 全部空转），接下来必须由
+   * **渲染方**在渲染出表头之后调一次 `repaint(id)` —— 那条路才是这类表的入口。
+   * 踩过的坑：请求日志整表由 React 岛渲染、首帧异步提交，本文件加载期注册时
+   * `#req-list` 还不存在，这里连观察者都装不上，而岛那边只在挂载时补了一次
+   * （那时表头还没渲染出来），两头空转 → 整张表永远拖不动。
+   * 所以「动态渲染的表」这一条契约是强制的，不是兜底。
    *
    * 观察者只对子节点变动触发；而 paint 写的是容器自身的 style，不会引发
    * 子节点变动，所以不存在自激循环。对已有把手直接跳过，重复调用也安全。
