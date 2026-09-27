@@ -195,6 +195,8 @@ export type SharedWindow = {
   wbAccountConcDialog?: { open?: (account: AccountRecord) => void; close?: () => void }
   /** ZCode「领套餐」流程（ui/zcode-claim.js，本页只把账号对象递过去） */
   wbZcodeClaim?: { start?: (account: AccountRecord | undefined) => Promise<unknown> }
+  /** CodeArts「领福利」流程（ui/codearts-welfare.js：只读探测 → 确认 → 领取 → 回读） */
+  wbCodeArtsWelfare?: { start?: (account: AccountRecord | undefined) => Promise<unknown> }
   /** 「添加账号」弹窗（归另一个代理，本页只调它的 open） */
   wbAddAccountModal?: { open?: () => void; close?: () => void }
   /** 添加表单的步骤复位（打开弹窗后按 providers 摘要重画卡片） */

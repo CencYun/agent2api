@@ -419,6 +419,12 @@
   <!-- ZCode「周末套餐」的探测与领取（账号页那一列按钮）。
        依赖 window.wbAccountsView 的列注册与 window.wbAliyunCaptcha。 -->
   <script src="zcode-claim.js"></script>
+  <!-- CodeArts 的「领福利」流程（与上面 zcode-claim.js 同一约定：岛只把账号对象递过去，
+       探测 → 确认 → 领取 → 回读二次确认这四步都在这个引擎里，它要问的是管理接口
+       而不是本页的普通 fetch —— 桌面壳里管理接口要走 Tauri 的 api_request 命令）。
+       界面上那颗按钮的判据（能力位 welfare）与台账读数都在岛上，见
+       ui-islands/src/islands/accounts-domain.ts 的 supportsWelfare / welfareStateOf。 -->
+  <script src="codearts-welfare.js"></script>
   <!-- 提供商目录：provider 摘要与「作用提供商」写入的唯一前端入口。
        必须排在所有消费者（accounts-groups / logs-panel）之前 -->
   <script src="providers.js"></script>

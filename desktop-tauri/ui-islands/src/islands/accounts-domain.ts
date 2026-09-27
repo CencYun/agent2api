@@ -43,6 +43,19 @@ type ProviderFeatures = {
   emailAsName?: boolean
   /** 有没有「领体验套餐」这个动作（只有 ZCode 两家） */
   claim?: boolean
+  /**
+   * 有没有「领福利」这个动作（只有 CodeArts）。**刻意不与 ZCode 的 `claim` 合并**：
+   * 那家的领取要过一次阿里云验证码、且判据看后端给的 `canClaim`（账号得带套餐令牌），
+   * 本家两样都没有 —— 共用一个位会让两边的按钮判据互相污染。
+   */
+  welfare?: boolean
+  /**
+   * 这一家「并发上限」的默认值（>0 = 本家**没有**「不限」这一档）。
+   * CodeArts 的 3 是上游硬顶（超过直接回 HTTP 400，且那是账号级冲突、不降级换号），
+   * 所以那一家把 `0` 解释成「按默认 3」而不是「不做并发过滤」；后端同一口径写在两处
+   * （公开形态把没配过的报成 3、准入闸按 3 判），界面上说了就得对上。
+   */
+  concurrencyDefault?: number
 }
 
 /**
@@ -83,6 +96,20 @@ const PROVIDER_FEATURES: Record<string, ProviderFeatures> = {
   // expiry 取 expiresAt 是给 add_zcode_account 的契约（落账号时要写访问令牌的过期时间）
   zcode: { usage: false, checkin: false, claim: true, edition: true, identifier: 'userId', expiry: 'expiresAt' },
   'zcode-intl': { usage: false, checkin: false, claim: true, edition: true, identifier: 'userId', expiry: 'expiresAt' },
+  // CodeArts（华为云 AI 代码助手）。各位各有出处，别照着别家抄：
+  // `usage: true` —— 余额是**两份账**（订阅统计 + 福利网关，见 providers::codearts::balance），
+  //   界面上「读到 0」与「没读到」必须能分开，后端因此把失败的一侧写进 statisticsError /
+  //   benefitError 而不是整次失败（半次失败的呈现见 accounts-panels 的 usageSummary）。
+  // `welfare: true` —— 本家没有「每日签到」，对应物是 ops 福利领取（探测 → 确认 →
+  //   领取 → 回读二次确认），是用户点一下才走的独立按钮。
+  // `edition: false` —— 没有版本/地区概念：region 固定在 cn-north-4 且必须与 token
+  //   签发地一致，不是用户可选项；`login_type`（WEB/IDE）也不是版本，别塞进这一列。
+  // `expiry: 'expiresAt'` —— 临时凭据约一小时到期，这一列对本家**是主要信息**。
+  codearts: {
+    usage: true, checkin: false, welfare: true, edition: false,
+    identifier: 'userId', expiry: 'expiresAt',
+    concurrencyDefault: 3,
+  },
 }
 
 /**
@@ -237,6 +264,82 @@ export function supportsCheckin(account: AccountRecord | null | undefined): bool
 export function supportsClaim(account: AccountRecord | null | undefined): boolean {
   if (!providerFeatures(providerOf(account)).claim) return false
   return account?.canClaim !== false
+}
+
+/**
+ * 本家有没有「领福利」这个动作。
+ *
+ * 只看能力位，**没有**第二道 `canClaim` 判据：ZCode 那道闸是因为它的账号可能
+ * 只粘了转发用的 accessToken、没有套餐令牌；CodeArts 的领取用的就是账号自己那份
+ * 凭据，能路由就一定能领（真领不了由后端如实报错）。
+ */
+export function supportsWelfare(account: AccountRecord | null | undefined): boolean {
+  return Boolean(providerFeatures(providerOf(account)).welfare)
+}
+
+/**
+ * 今天的**北京时间**自然日（`YYYY-MM-DD`）。
+ *
+ * ⚠️ 不能按浏览器本地日算：后端那条自然日界是 `welfare::today`（UTC+8，中国无夏令时），
+ * 台账里的 `day` 就是它写进去的字符串。界面若在别的时区按本地日判会出现两种错：
+ * 北京 0 点前本地已是新一天 → 把昨天的「已领」显示成今天的（按钮被误置灰）；
+ * 反过来则今天的读数被当成昨天（该灰不灰）。所以这里比的是**同一个字符串**，
+ * 判据只有一份定义。
+ */
+export function beijingDay(at: number = Date.now()): string {
+  return new Date(at + 8 * 3600 * 1000).toISOString().slice(0, 10)
+}
+
+/** 领取台账 → 按钮要用的读数（后端写在 `account.welfare` 上） */
+export type WelfareState = { known: boolean; today: boolean; day: string; accepted: boolean; attempts: number; confirmed: number }
+
+/**
+ * 台账读数（`{known, today, day, accepted, attempts, confirmed}`）。
+ *
+ * ── 读不懂的台账一律按「今天没有读数」──────────────────────
+ * 缺字段 / 日期不是今天 / 压根没领过，三种情况在这里都是 `today: false` 且
+ * `attempts`/`accepted`/`confirmed` 归零：按钮照常可点，由后端如实报错（它那份
+ * 校验比这里严，见 `ledger_of`）。这里**不复制**那份校验逻辑，否则同一件事有两处
+ * 判据、改一处漏一处。**昨天的台账与今天无关**（后端也是整份重来），所以它只留下
+ * `known: true`（「这台机器上有过台账」）而不带昨天的数字。
+ *
+ * `confirmed` 是**条数**而不是台账上的某个字段：后端把每条活动的进度存在
+ * `campaigns` 字典里（`{idempotentKey, claimed, confirmed}`），台账顶层没有
+ * `confirmed` 这个键 —— 悬停里那句「已确认到账 N 项」数的就是这里的项。
+ */
+export function welfareStateOf(account: AccountRecord | null | undefined): WelfareState {
+  const day = beijingDay()
+  const empty: WelfareState = { known: false, today: false, day, accepted: false, attempts: 0, confirmed: 0 }
+  const ledger = account?.welfare
+  if (!ledger || typeof ledger !== 'object' || Array.isArray(ledger)) return empty
+  const row = ledger as Record<string, unknown>
+  const campaigns = (row.campaigns && typeof row.campaigns === 'object' ? row.campaigns : {}) as Record<string, { confirmed?: unknown }>
+  const state: WelfareState = {
+    known: true,
+    today: row.day === day,
+    day,
+    accepted: row.accepted === true,
+    attempts: Number(row.attempts) || 0,
+    confirmed: Object.values(campaigns).filter(item => item?.confirmed === true).length,
+  }
+  return state.today ? state : { ...empty, known: true }
+}
+
+/** 「已领」的悬停说明：说清哪一天、领到哪一份额度、什么时候能再领。 */
+export function welfareDoneTitle(state: WelfareState): string {
+  // 「不增加福利模型的 token 池」是**故意留在这里**的：这一家有两份账，领到的积分进的
+  // 是套餐赠送积分，而用户点完最可能问的下一句就是「那我的福利模型怎么还是没额度」——
+  // 答案放在这颗按钮的悬停里，不必再去余额列上猜（后端 usage 文档的 note 同口径）。
+  return `今天（北京时间 ${state.day}）已由官方确认到账 ${state.confirmed} 项；`
+    + '领到的是套餐赠送积分，不增加福利模型的 token 池；按自然日重置，明天可再领'
+}
+
+/** 「领福利」的悬停说明：把台账里已有的读数带上，回答「今天第几次了」。 */
+export function welfareTodoTitle(state: WelfareState): string {
+  const tried = state.today && state.attempts > 0
+    ? `今天（北京时间 ${state.day}）已试过 ${state.attempts} 次但官方尚未确认到账，`
+    : ''
+  return `${tried}探测并领取官方每日登录赠送的套餐积分（到账进套餐积分，不增加福利模型 token 池）`
 }
 
 /**

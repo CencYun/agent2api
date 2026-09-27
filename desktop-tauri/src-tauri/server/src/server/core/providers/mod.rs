@@ -105,6 +105,10 @@ pub mod catalog_cache;
 pub mod catalog_refresh;
 pub mod catpaw;
 pub mod cline;
+/// CodeArts（华为云 snap-access）。适配器实现在 `codearts/`，
+/// 语义来源与施工计划见 `cpa-deploy/notes/agent2api-codearts-port-plan.md`。
+/// 目前只落了签名层，尚未进 `ProviderKind`（不参与目录与转发）。
+pub mod codearts;
 pub mod content_block;
 /// 自定义提供商的**运行期接线**（目录聚合的追加段 + Chat Completions 协议
 /// 转发）。它不进本文件的身份体系（`ProviderKind` / `PROVIDERS`，见
@@ -255,6 +259,10 @@ pub enum ProviderKind {
     /// 其余各家都在 `core::auto_checkin` 的提供商清单里，本家不在 ——
     /// 它没有签到活动，运营玩法是限时发放的体验套餐（见 `zcode::claim`）。
     ZcodeIntl,
+    /// CodeArts（华为云 AI 代码助手 / snap-access）。适配实现在 `codearts/`：
+    /// 请求要华为云 SDK-HMAC-SHA256 签名、对话是有状态的（每账号只允许 3 路
+    /// 并发会话，靠 chat-session 心跳占槽），因此 `is_stateful()` 为 true。
+    CodeArts,
 }
 
 /// 一个提供商的静态元数据。
@@ -300,6 +308,7 @@ pub const PROVIDERS: &[ProviderMeta] = &[
     // 合并时同名模型先归谁家 —— 国内版在前（国内网络环境下更常被添加的那个）。
     ProviderMeta { id: "zcode", label: "ZCode 国内版" },
     ProviderMeta { id: "zcode-intl", label: "ZCode 国际版" },
+    ProviderMeta { id: "codearts", label: "CodeArts" },
 ];
 
 /// provider id 在注册表里的下标（未知 id → None）。
@@ -372,6 +381,7 @@ pub fn kind_from_id(id: &str) -> Option<ProviderKind> {
         "accio-cn" => Some(ProviderKind::AccioCn),
         "zcode" => Some(ProviderKind::Zcode),
         "zcode-intl" => Some(ProviderKind::ZcodeIntl),
+        "codearts" => Some(ProviderKind::CodeArts),
         // 走到这里 = 上面的注册表判定已放行、这个 match 却没有对应分支：
         // 只可能是有人给 `PROVIDERS` 加了条目忘了加这里。开发期喊出来；
         // release 返回 None（见上：宁可为「未知」，不可误认成别家）。
@@ -402,6 +412,7 @@ pub const fn kind_id(kind: ProviderKind) -> &'static str {
         ProviderKind::AccioCn => "accio-cn",
         ProviderKind::Zcode => "zcode",
         ProviderKind::ZcodeIntl => "zcode-intl",
+        ProviderKind::CodeArts => "codearts",
     }
 }
 

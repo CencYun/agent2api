@@ -876,6 +876,7 @@ pub fn adapter_for(kind: ProviderKind) -> &'static dyn ProviderAdapter {
         // 参数化，见 `autoclaw::adapter` 与 `autoclaw::region` 的模块头）
         ProviderKind::AutoClawIntl => &super::autoclaw::AUTOCLAW_INTL_ADAPTER,
         ProviderKind::Qoder => &super::qoder::QODER_ADAPTER,
+        ProviderKind::CodeArts => &super::codearts::CODEARTS_ADAPTER,
         // Cline 的两个额度池是两个 provider、两个实例（同一份实现的按池
         // 参数化，见 `cline::adapter` 的模块头）
         ProviderKind::ClineFree => &super::cline::CLINE_FREE_ADAPTER,
@@ -941,6 +942,10 @@ pub fn implemented_kinds() -> Vec<ProviderKind> {
         // 本列表回答的是「这家接线了没有」，不是「这家的目录能不能远程刷」。
         ProviderKind::Zcode,
         ProviderKind::ZcodeIntl,
+        // CodeArts 在本列表里 = 适配器已接线、可参与目录刷新调度。
+        // 注意 `supports_chat()` 目前为 false（转发入口尚未接线，见
+        // `codearts/mod.rs`），所以"接线了"指的是目录/账号这两条能跑。
+        ProviderKind::CodeArts,
     ]
 }
 

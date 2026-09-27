@@ -84,6 +84,12 @@ pub fn supports_checkin(account: &Value) -> bool {
         .get("provider")
         .and_then(Value::as_str)
         .unwrap_or(crate::server::core::providers::DEFAULT_PROVIDER_ID);
+    // CodeArts 目前没有签到/领取链路（每日福利领取在 M6），必须先排除：
+    // `checkin_for` 的分派 match 把「不在范围里的家」兜到 workbuddy 分支，
+    // 拿 CodeArts 的 AK/SK 去打腾讯的签到接口只会稳定报错。
+    if provider == crate::server::core::account_store::codearts_accounts::CODEARTS_PROVIDER_ID {
+        return false;
+    }
     !crate::server::core::account_store::is_accio_family(provider)
 }
 

@@ -718,6 +718,18 @@ export async function startZcodeClaim(id: string): Promise<void> {
   await shared().wbZcodeClaim?.start?.(findAccount(id) || undefined)
 }
 
+/**
+ * CodeArts 的「领福利」：整条流程（只读探测 → 用户确认 → 领取 → 等官方回读）
+ * 住在 legacy 脚本 `ui/codearts-welfare.js` 里，这里只把账号对象递过去。
+ *
+ * 与上面那颗「领套餐」是**两件事**（判据位 `welfare` vs `claim`、本家不要验证码、
+ * 端点也不同），所以是另一个全局对象而不是 `wbZcodeClaim` 的一个参数。
+ * 台账刷新由那侧负责（它领完自己调 `wbApp.refresh()`）。
+ */
+export async function startCodeArtsWelfare(id: string): Promise<void> {
+  await shared().wbCodeArtsWelfare?.start?.(findAccount(id) || undefined)
+}
+
 /* ─── 对外契约（window）────────────────────── */
 
 /** 一行账号的渲染上下文（视图层按它取位置、勾选、余额与连接数） */

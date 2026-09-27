@@ -40,12 +40,14 @@ import {
   accountTags, activeLimits, checkedInToday, checkinDoneTitle,
   displayNameOf, editionSuffix, formatResetText, identifierOf, isDesktopAccount, isEnabled,
   providerFeatures, providerOf, RESET_UNKNOWN, supportsCheckin, supportsClaim, supportsUsage,
+  supportsWelfare, welfareDoneTitle, welfareStateOf, welfareTodoTitle,
 } from './accounts-domain'
 import { PRIORITY_MAX, PRIORITY_MIN, priorityOf } from './accounts-columns'
 import {
   PROXY_CUSTOM_CURRENT, PROXY_CUSTOM_EDIT, applyProxyPick, checkinErrorOf, clashError, clashSnapshot,
   commitPriority, connectionsOf, maskName, moveAccount, openSettingsDialog, queryUsageOnce, runCheckin,
-  setAccountEnabled, setPanelOpen, startZcodeClaim, toggleNamesHidden, usageEntries, usageFailureOf,
+  setAccountEnabled, setPanelOpen, startCodeArtsWelfare, startZcodeClaim, toggleNamesHidden,
+  usageEntries, usageFailureOf,
 } from './accounts-data'
 /** 图标（icons.js 的内联 SVG 串）：整站共用一份图标集，这里只做注入 */
 function iconHtml(name: string, size: number): string {
@@ -303,7 +305,22 @@ function usageSummary(entry: UsageEntry): { text: string; kind: string; title: s
       .join(' · ')
     const subscription = subscriptionText(data.subscription)
     const available = `可用 ${numberText(data.available)} ${unit}`
-    return { text: available, kind: 'ok', title: [available, detail, subscription].filter(Boolean).join(' · ') }
+    // ── 部分失败：一份账读到了、另一份没读到 ────────────────────
+    // CodeArts 的余额是**两台网关**（订阅统计 + 福利网关，见后端
+    // `providers::codearts::balance` 的模块头），后端把失败的一侧写进
+    // `statisticsError` / `benefitError` 而不是整次失败。这时读数是真的、
+    // 但**不完整**：显示成一片绿「可用 —」会被读成「额度用完了」，
+    // 而实际是那半边根本没读到。判据仍然只在 `usageFailureOf` 那一处
+    // （整次失败的入口），这里只补「半次失败」。
+    const missing = [
+      data.statisticsError ? `订阅统计未读到：${String(data.statisticsError)}` : '',
+      data.benefitError ? `福利网关未读到：${String(data.benefitError)}` : '',
+    ].filter(Boolean)
+    return {
+      text: available + (missing.length ? ' ⚠' : ''),
+      kind: missing.length ? 'warn' : 'ok',
+      title: [available, detail, subscription, ...missing].filter(Boolean).join(' · '),
+    }
   }
   return { text: '无数据', kind: 'muted', title: '未返回可识别的余额数据' }
 }
@@ -311,7 +328,8 @@ function usageSummary(entry: UsageEntry): { text: string; kind: string; title: s
 /**
  * 余额列：**只放读数**（不可点）—— 查询按钮住在操作列，这一列纯粹是
  * 「一眼看出还剩多少」。刻意不换成组件库的 Badge：它是读数而不是状态徽章，
- * 样式全在 `.usage-sum` 里（三档语义色：ok / bad / muted）。
+ * 样式全在 `.usage-sum` 里（四档语义色：ok / bad / muted / warn —— `warn` 是
+ * 「读到了但不完整」那一档，见上面 `usageSummary` 的半次失败分支）。
  */
 export function UsageCell({ account }: { account: AccountRecord }) {
   if (!supportsUsage(account)) {
@@ -465,7 +483,7 @@ export function ProxyCell({ account }: { account: AccountRecord }) {
 /* ─── 操作列 ────────────────────────────────── */
 
 /**
- * 操作：签到 / 领套餐 / 余额 / 设置 / ⋯，顺序固定。
+ * 操作：签到 / 领套餐 / 领福利 / 余额 / 设置 / ⋯，顺序固定。
  *
  * 顺序按「点的频次」排，签到排头：它是这张表里唯一**每天都会做一次**的动作，
  * 排在第一位让手指有固定的落点 —— 按钮的显隐会随账号状态变，但**顺序不跟着变**。
@@ -478,11 +496,14 @@ export function ProxyCell({ account }: { account: AccountRecord }) {
  */
 export function ActionsCell({ account, atFront }: { account: AccountRecord; atFront: boolean }) {
   const [claimBusy, setClaimBusy] = React.useState(false)
+  const [welfareBusy, setWelfareBusy] = React.useState(false)
   const [usageBusy, setUsageBusy] = React.useState(false)
   const checkedIn = checkedInToday(account)
   const canCheckin = supportsCheckin(account)
   const canUsage = supportsUsage(account)
   const canClaim = supportsClaim(account)
+  const canWelfare = supportsWelfare(account)
+  const welfareTaken = welfareStateOf(account)
   const checkinFailed = checkinErrorOf(account.id)
 
   async function claim(): Promise<void> {
@@ -493,6 +514,16 @@ export function ActionsCell({ account, atFront }: { account: AccountRecord; atFr
       await startZcodeClaim(account.id)
     } finally {
       setClaimBusy(false)
+    }
+  }
+
+  async function welfare(): Promise<void> {
+    // 领取是外部服务的**写操作**：流程期间全程禁用，否则连点会发两次 claim。
+    setWelfareBusy(true)
+    try {
+      await startCodeArtsWelfare(account.id)
+    } finally {
+      setWelfareBusy(false)
     }
   }
 
@@ -515,6 +546,21 @@ export function ActionsCell({ account, atFront }: { account: AccountRecord; atFr
         <Button variant='outline' size='xs' disabled={claimBusy}
           title='探测并领取官方的限时体验套餐（需要过一次人机验证）'
           onClick={() => void claim()}>领套餐</Button>
+      ) : null}
+      {/* CodeArts 的「领福利」：与上面那颗「领套餐」是**两件事**（判据位不同、流程也不同
+          —— 本家不要验证码，但领取前有一次只读探测、领取后有一次回读确认）。
+          今天已经到账（台账 `accepted`）时显示「已领」并置灰，与签到那颗同一套语义：
+          再点也只是让后端回一句「已领取并确认」，留着可点会让人以为还能再领一次。
+          **试过但没到账**不置灰 —— 手动点击在后端是绕过限流闸的（那条闸只管自动那一类），
+          幂等键按活动存而不是按轮次存，重试不会变成第二笔领取。 */}
+      {canWelfare ? (
+        welfareTaken.today && welfareTaken.accepted ? (
+          <Button variant='outline' size='xs' disabled title={welfareDoneTitle(welfareTaken)}>已领</Button>
+        ) : (
+          <Button variant='outline' size='xs' disabled={welfareBusy}
+            title={welfareTodoTitle(welfareTaken)}
+            onClick={() => void welfare()}>领福利</Button>
+        )
       ) : null}
       {canUsage ? (
         <Button variant='outline' size='xs' disabled={usageBusy}

@@ -559,6 +559,11 @@
 .usage-sum.ok { color: var(--ok); font-weight: 600; }
 .usage-sum.bad { color: var(--danger); }
 .usage-sum.muted { color: var(--text-3); }
+/* 余额只读到了一半（CodeArts 的两台网关里有一台没回话）：读数是可信的、
+   但不完整。既不是失败（不用红），也不能是一片绿（会把「没读到」读成
+   「额度用完了」）。warn 这一档在别处正是「值得看一眼但不必去查故障」，
+   与 `#toast.warn` / `.badge.warn` 同一语义。 */
+.usage-sum.warn { color: var(--warn); font-weight: 600; }
 
 /* ─── 操作列 ─── */
 

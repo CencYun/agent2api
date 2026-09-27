@@ -30,6 +30,7 @@
 mod accio;
 mod autoclaw;
 mod catpaw;
+pub mod codearts;
 mod qoder;
 mod zcode;
 
@@ -288,6 +289,9 @@ impl LoginService {
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
                 .remove(state);
+            // CodeArts 那一轮的 PKCE verifier / DPoP 私钥在自己的待办表里，
+            // 不清就要占到 5 分钟超时才还 —— 而用户取消后往往立刻重试。
+            self.drop_codearts_pending(state);
         }
         canceled
     }
@@ -602,6 +606,30 @@ impl LoginService {
                 format!("登录任务记录的提供商「{}」无法识别", task.provider),
             ));
         };
+        // CodeArts：粘贴回来的整条回调 URL 在这里收尾。
+        // 为什么不是「按 state 取 code」那套：portal 的回调**可能只带一个 code**、
+        // 不带我们的配对信息，收尾要「逐个候选试 verifier」，还要认第一次回调下发的
+        // secret（ticket 兜底通道）。整套判定都在 `core::login::codearts` 里，
+        // 这里只负责把 URL 的查询串拆给它。
+        if kind == ProviderKind::CodeArts {
+            let params: std::collections::HashMap<String, String> = url::Url::parse(callback_url)
+                .ok()
+                .map(|parsed| {
+                    parsed
+                        .query_pairs()
+                        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            return match self.finish_codearts_login(&params).await {
+                codearts::Callback::ContinueTo(_) => Err(GatewayError::with_status(
+                    400,
+                    "这条回调地址要浏览器自己去跳（网关没法替它跳转），请把地址栏里最终那条地址再粘一次",
+                )),
+                codearts::Callback::Accepted(account_id, _) => Ok(account_id.unwrap_or_default()),
+                codearts::Callback::Failed(status, message) => Err(GatewayError::with_status(i32::from(status), message)),
+            };
+        }
         if kind != ProviderKind::Raccoon {
             return Err(GatewayError::with_status(400, "该登录任务不接收授权码回调"));
         }
