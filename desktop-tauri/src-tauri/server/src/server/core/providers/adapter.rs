@@ -888,6 +888,7 @@ pub fn adapter_for(kind: ProviderKind) -> &'static dyn ProviderAdapter {
         // 见 `zcode::adapter` 与 `zcode::region` 的模块头）
         ProviderKind::Zcode => &super::zcode::adapter::ZCODE_ADAPTER,
         ProviderKind::ZcodeIntl => &super::zcode::adapter::ZCODE_INTL_ADAPTER,
+        ProviderKind::Trae => &super::trae::adapter::TRAE_ADAPTER,
     }
 }
 
@@ -941,6 +942,11 @@ pub fn implemented_kinds() -> Vec<ProviderKind> {
         // 本列表回答的是「这家接线了没有」，不是「这家的目录能不能远程刷」。
         ProviderKind::Zcode,
         ProviderKind::ZcodeIntl,
+        // Trae 已接真身（登录 / 凭据 / 目录 / 转发），并且**真有**远程目录
+        // （`supports_model_refresh()` 为 true），所以它必须在本列表里 ——
+        // 不在的话刷新循环根本不会问它，症状是"界面上点了刷新、日志里
+        // 一句 trae 都没有"（与"刷了但没取到"是两种完全不同的故障）。
+        ProviderKind::Trae,
     ]
 }
 

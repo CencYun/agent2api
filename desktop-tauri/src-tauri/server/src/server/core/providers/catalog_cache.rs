@@ -83,6 +83,8 @@ pub const SCOPE_CLINE: &str = "cline";
 pub const SCOPE_ACCIO_GLOBAL: &str = "accioGlobal";
 /// Accio 国内版
 pub const SCOPE_ACCIO_CN: &str = "accioCn";
+/// Trae SOLO（`/api/ide/v1/get_detail_param`）
+pub const SCOPE_TRAE: &str = "trae";
 
 /// 全部 scope（事实来源：`cached_scopes` 按它遍历；新增一家时加在这里）。
 pub const ALL_SCOPES: &[&str] = &[
@@ -96,6 +98,7 @@ pub const ALL_SCOPES: &[&str] = &[
     SCOPE_CLINE,
     SCOPE_ACCIO_GLOBAL,
     SCOPE_ACCIO_CN,
+    SCOPE_TRAE,
 ];
 
 /// 一份清单缓存

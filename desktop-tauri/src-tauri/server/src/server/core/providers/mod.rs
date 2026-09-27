@@ -116,6 +116,9 @@ pub mod qoder;
 pub mod raccoon;
 pub mod refresh_flight;
 pub mod router;
+/// Trae（字节 AI IDE）。目前只有"形状层"（签名无关的 body/头/SSE 判定），
+/// 适配器与账号存储在后续里程碑接入 —— 先挂模块是为了让向量测试能跑。
+pub mod trae;
 pub mod workbuddy;
 pub mod zcode;
 
@@ -255,6 +258,22 @@ pub enum ProviderKind {
     /// 其余各家都在 `core::auto_checkin` 的提供商清单里，本家不在 ——
     /// 它没有签到活动，运营玩法是限时发放的体验套餐（见 `zcode::claim`）。
     ZcodeIntl,
+    /// Trae（字节跳动 AI IDE 的 SOLO 通道）。适配实现在 `providers::trae/`。
+    ///
+    /// ── 为什么只有一家、没有"国际版"伴生 ─────────────────────
+    /// AutoClaw / Accio / ZCode 的两地是**同一套协议换域名**，所以做成两家
+    /// 按地区参数化。Trae 不是：国内 SOLO 走
+    /// `trae-api-cn.mchost.guru/api/agent/v3/llm_utils_chat`（自定义信封 +
+    /// SSE 无 `[DONE]`），国际版走 `chat_sessions` → `events` 另一套协议、
+    /// 另一个 Origin —— 那是**两个协议**，不是一个地区的两种拼法。
+    /// 因此本 kind 只代表国内 SOLO，国际版将来接入时另立 kind
+    /// （`trae-intl`），不要往本家塞 `region` 字段：那会让"用哪套协议"
+    /// 变成账号的属性（这正是本文件反复拒绝的那个坑）。
+    ///
+    /// ── 本家没有签到活动可自动领 ────────────────────────────
+    /// `core::auto_checkin` 的提供商清单不含本家。每日签到存在，但要单独授权
+    /// 才会接（见 cpa-deploy/notes/agent2api-trae-port-plan.md 的 §8 决策 3）。
+    Trae,
 }
 
 /// 一个提供商的静态元数据。
@@ -300,6 +319,7 @@ pub const PROVIDERS: &[ProviderMeta] = &[
     // 合并时同名模型先归谁家 —— 国内版在前（国内网络环境下更常被添加的那个）。
     ProviderMeta { id: "zcode", label: "ZCode 国内版" },
     ProviderMeta { id: "zcode-intl", label: "ZCode 国际版" },
+    ProviderMeta { id: "trae", label: "Trae" },
 ];
 
 /// provider id 在注册表里的下标（未知 id → None）。
@@ -372,6 +392,7 @@ pub fn kind_from_id(id: &str) -> Option<ProviderKind> {
         "accio-cn" => Some(ProviderKind::AccioCn),
         "zcode" => Some(ProviderKind::Zcode),
         "zcode-intl" => Some(ProviderKind::ZcodeIntl),
+        "trae" => Some(ProviderKind::Trae),
         // 走到这里 = 上面的注册表判定已放行、这个 match 却没有对应分支：
         // 只可能是有人给 `PROVIDERS` 加了条目忘了加这里。开发期喊出来；
         // release 返回 None（见上：宁可为「未知」，不可误认成别家）。
@@ -402,6 +423,7 @@ pub const fn kind_id(kind: ProviderKind) -> &'static str {
         ProviderKind::AccioCn => "accio-cn",
         ProviderKind::Zcode => "zcode",
         ProviderKind::ZcodeIntl => "zcode-intl",
+        ProviderKind::Trae => "trae",
     }
 }
 

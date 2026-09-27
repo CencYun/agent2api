@@ -63,6 +63,11 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 base64 = "0.22"
 # Qoder 网页登录的 PKCE verifier / nonce
 getrandom = "0.2"
+# Trae 登录的设备密钥对：官方客户端每次登录生成一套 EC P-256，
+# 把 SPKI 公钥 PEM 塞进 ExchangeToken 的 DeviceInfo.DevicePublicKey，
+# 空值会被上游判成 HTTP 401 / 业务码 20405（设备绑定，2026-09-04 实测）。
+# 只开 ecdsa + pkcs8：要的是"能生成、能导出 SPKI/PKCS#8"，不做验签。
+p256 = { version = "0.13", features = ["pem", "pkcs8"] }
 # 出站请求体的指纹脱敏（core/sanitize.rs）
 regex = "1"
 # AutoClaw 适配器 encryption 侧（providers/autoclaw/crypto.rs）
