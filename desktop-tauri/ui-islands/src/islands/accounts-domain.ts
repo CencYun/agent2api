@@ -65,7 +65,11 @@ const PROVIDER_FEATURES: Record<string, ProviderFeatures> = {
   // 那一家就会掉进 GENERIC_FEATURES（症状：余额按钮消失、标识列显示成空）
   autoclaw: { usage: true, checkin: true, edition: false, identifier: 'userId', expiry: 'tokenExpiresAt' },
   'autoclaw-intl': { usage: true, checkin: true, edition: false, identifier: 'userId', expiry: 'tokenExpiresAt', emailAsName: true },
-  qoder: { usage: true, checkin: false, edition: true, identifier: 'userId', expiry: 'expiresAt', emailAsName: true },
+  // Qoder 的签到**只有中国版有**（国际版这个地区没有签到计划，见 providers::qoder::checkin）。
+  // 能力位照样写 true —— 国际版账号由 supportsCheckin 的第二道判据（edition !== 'intl'，
+  // Qoder 的公开形态带该字段）单独排除，明细面板给出「国际版暂无签到活动」的说明；
+  // 中国版里没有被下发活动的账号（Free 套餐实测如此）会在点签到后得到一条中性提示。
+  qoder: { usage: true, checkin: true, edition: true, identifier: 'userId', expiry: 'expiresAt', emailAsName: true },
   // Cline 两条键：同一家上游按计费通道拆成两个 provider，账号形态完全一样（见
   // providers::cline::models）。查表按 id 精确匹配，只登记一个会让另一家掉进兜底
   'cline-free': { usage: true, checkin: false, edition: false, identifier: 'account', expiry: 'expiresAt' },
@@ -209,9 +213,13 @@ export function accountEdition(account: AccountRecord | null | undefined): 'cn' 
 /**
  * 该账号是否参与签到：所属家**有签到活动**，且不是国际版。
  *
- * 版本限定只对 WorkBuddy 实际生效 —— 只有它有 edition 概念、也只有它的签到活动分
- * 国内 / 国际站。判断按「非 intl」写而不是逐个 provider 特判：另几家没有 edition
- * 字段，accountEdition 会把缺省值归一成 cn，因此这个条件对它们是恒真的。
+ * 版本限定对 WorkBuddy 与 Qoder 两家实际生效 —— 它们的签到活动只在国内站
+ * （Qoder 国际版这个地区根本没有签到计划）。判断按「非 intl」写而不是逐个
+ * provider 特判：另几家没有 edition 字段，accountEdition 会把缺省值归一成 cn，
+ * 因此这个条件对它们是恒真的。
+ *
+ * 与后端同源同口径：`billing::checkin::supports_checkin` 也是这条判据，
+ * 两处任一改动都要同时改（批量签到的目标集合由后端算，前端这处只决定按钮）。
  */
 export function supportsCheckin(account: AccountRecord | null | undefined): boolean {
   if (!providerFeatures(providerOf(account)).checkin) return false
@@ -439,11 +447,25 @@ export function accountTags(account: AccountRecord): AccountTag[] {
   ].filter((tag): tag is AccountTag => tag !== null)
 }
 
+/**
+ * 「下次什么时候能再签」的说明（已签到按钮的悬停说明与明细面板共用一句）。
+ *
+ * 两家口径不同：
+ *   - WorkBuddy / 小浣熊 / AutoClaw：按**自然日**重置，明天 0 点后可再签；
+ *   - Qoder：每日权益是一个**活动窗口**（当天 10:00 → 次日 10:00），
+ *     所以 0 点后不一定能签 —— 说「0 点后可再签」会让人白点一次。
+ */
+export function checkinResetHint(account: AccountRecord | null | undefined): string {
+  return providerOf(account) === 'qoder'
+    ? 'Qoder 的每日权益按 10:00 → 次日 10:00 的活动窗口发放，新窗口开放后可再领'
+    : '签到按自然日重置，明天 0 点后可再签'
+}
+
 /** 「已签到」按钮的悬停说明：给出签到时刻与重置时机，回答「为什么点不动、什么时候能再签」 */
 export function checkinDoneTitle(account: AccountRecord | null | undefined): string {
   const at = Number(account?.checkinAt) || 0
   const clock = at > 0 ? `今天 ${new Date(at).toTimeString().slice(0, 5)}` : '今天'
-  return `${clock} 已签到；签到按自然日重置，明天 0 点后可再签`
+  return `${clock} 已签到；${checkinResetHint(account)}`
 }
 
 /** 签到明细里「今天已签到」那一刻的时钟串（0 返回空串） */

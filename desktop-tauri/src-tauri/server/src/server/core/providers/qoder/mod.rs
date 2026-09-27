@@ -43,6 +43,7 @@
 //!   stream.rs      上游 SSE 信封解包 + 思考标签拆解（跨分片）
 //!   piping.rs      流式首帧预读 + 流式透传（issue #8 的换号修复在这）
 //!   chat.rs        转发编排（构造 → 发送 → 翻译）与 delta 翻译器
+//!   checkin.rs     每日签到（中国版的活动领取；国际版没有签到计划）
 //!
 //! ── panic=abort ────────────────────────────────────────────
 //! 本模块在对话链路上，绝不 unwrap/expect/panic。
@@ -50,6 +51,7 @@
 pub mod auth;
 mod balance;
 pub mod chat;
+pub mod checkin;
 pub mod context;
 pub mod credentials;
 pub mod cosy;

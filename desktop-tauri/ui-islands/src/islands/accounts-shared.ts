@@ -82,14 +82,15 @@ export type AccountsSnapshot = {
 /** 余额缓存的四种形态：undefined 未查 / null 查询中 / string 失败 / 对象结果 */
 export type UsageEntry = null | string | Record<string, unknown> | undefined
 
-/** 签到缓存的四种形态：undefined 未查 / null 签到中 / string 失败 / claim 结果 */
-export type CheckinEntry = null | string | { success?: boolean; msg?: string; code?: unknown; data?: Record<string, unknown>; rewardPoints?: number } | undefined
-
 /** 列的对齐档（与 table-col-settings 的 Align 同一套取值） */
 export type Align = 'left' | 'center' | 'right'
 
-/** 明细面板的两种 kind（余额没有面板，见 accounts-page.tsx 的说明） */
-export type PanelKind = 'limits' | 'checkin'
+/**
+ * 行内明细面板的 kind。**只剩「限流明细」一种**：签到曾经也有一个明细面板，
+ * 已按要求删除 —— 签到的结果现在只落在行上那颗按钮（状态 + title 里的失败原因）
+ * 与一条 toast 上，见 accounts-data.ts 的 `checkinErrors`。
+ */
+export type PanelKind = 'limits'
 
 /* ─── 全局桥 ─────────────────────────────────── */
 

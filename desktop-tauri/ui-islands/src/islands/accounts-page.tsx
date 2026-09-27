@@ -37,9 +37,12 @@
  * 那时按钮还不存在 → 那一行会抛 TypeError，把 add-account.js 后面所有监听一起带崩。
  * 所以首次挂载用 flushSync 强制同步提交（DOM 与布局 effect 都落地），后续更新照常异步。
  *
- * ── 隐藏一律用条件渲染，不用 hidden 属性 ────────────────────
+ * ── 隐藏优先条件渲染 ───────────────────────────────────────
  * 组件库的工具类是**分层 + !important** 的，tokens.css 的 `[hidden] { display:none
  * !important }` 未分层；按 Cascade 5，important 的层序反转 —— 分层压过未分层。
+ * 组件库 globals.css 已补同层的 `[hidden][hidden]` 兜底，属性式显隐因此可用；
+ * 但能条件渲染就条件渲染（少一批常驻 DOM），属性式留给「节点必须常驻」的场合
+ * （登录引擎的段落与取消按钮，见 add-provider-blocks.tsx）。
  */
 
 import * as React from 'react'
@@ -360,7 +363,6 @@ function AccountsPage() {
                       </tr>
                       <PanelsRow account={account} colSpan={columns.length}
                         limitsOpen={panelOpen(account.id, 'limits')}
-                        checkinOpen={panelOpen(account.id, 'checkin')}
                         onClear={(id, model) => void clearLimits(id, model)} />
                     </React.Fragment>
                   )

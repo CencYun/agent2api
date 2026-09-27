@@ -27,10 +27,11 @@
 
 import {
   errorMessage, shared, toast,
-  type AccountRecord, type CheckinEntry, type ClashSnapshot, type PanelKind, type UsageEntry,
+  type AccountRecord, type ClashSnapshot, type PanelKind, type UsageEntry,
 } from './accounts-shared'
 import {
-  checkinableAccounts, isDesktopAccount, isEnabled, isRateLimited, supportsCheckin, supportsUsage,
+  checkinableAccounts, displayNameOf, isDesktopAccount, isEnabled, isRateLimited,
+  supportsCheckin, supportsUsage,
 } from './accounts-domain'
 import * as domain from './accounts-domain'
 import { clampPriority, priorityOf } from './accounts-columns'
@@ -48,15 +49,29 @@ export * from './accounts-store'
 export const NOT_CONFIGURED_CODE = 'usage_not_configured'
 
 /**
- * 余额 / 签到的结果缓存：**原地可变**的 Map，改完调 bump() 通知。
+ * 余额的结果缓存：**原地可变**的 Map，改完调 bump() 通知。
  * 为什么不像其余状态那样每次换新对象：写 `null`（「查询中」）这个中间态必须让视图立刻
  * 看到，而它是高频小改动（每次点按钮 / 每轮批量），每次拷贝一份纯属浪费。
  */
 const usageMap = new Map<string, UsageEntry>()
-const checkinMap = new Map<string, CheckinEntry>()
 
 export const usageEntries = (): ReadonlyMap<string, UsageEntry> => usageMap
-export const checkinEntries = (): ReadonlyMap<string, CheckinEntry> => checkinMap
+
+/**
+ * 上一次签到的**失败原因**（按账号 id）。
+ *
+ * 签到没有明细面板，结果只落在两处：成功/已领取由行上那颗按钮自己的状态表达
+ * （`checkedInToday` → 「已签到」）＋ 一条 toast；失败则要留下可复看的原因 ——
+ * toast 几秒后就没了，而「为什么没签上」正是需要复看的信息，所以记在这里，
+ * 由按钮的 title 读出来（见 `checkinErrorOf`）。
+ *
+ * 成功与「今天已领取」都不进这张表：前者按钮会变「已签到」，后者是上游的正常状态，
+ * 不该在按钮上挂一个「失败」提示。
+ */
+const checkinErrors = new Map<string, string>()
+
+/** 该账号上一次签到的失败原因（没有则空串）—— 行上「签到」按钮的 title 读它 */
+export const checkinErrorOf = (id: string): string => checkinErrors.get(id) || ''
 
 /* ─── Clash 出口缓存（代理列与代理表单共用）─────
  * 一次页面加载内多实例共享，避免重复请求。失败**不落缓存**（原因记进 lastClashError）
@@ -160,7 +175,7 @@ export function openBatchDialog(ids: string[], action = 'enable'): void {
 export function refreshCaches(validIds: Set<string>): void {
   let touched = false
   for (const id of [...usageMap.keys()]) if (!validIds.has(id)) { usageMap.delete(id); touched = true }
-  for (const id of [...checkinMap.keys()]) if (!validIds.has(id)) { checkinMap.delete(id); touched = true }
+  for (const id of [...checkinErrors.keys()]) if (!validIds.has(id)) { checkinErrors.delete(id); touched = true }
   const panels = new Map(getStore().panels)
   for (const id of [...panels.keys()]) if (!validIds.has(id)) { panels.delete(id); touched = true }
   const connections = new Map(getStore().connections)
@@ -363,6 +378,9 @@ export async function queryAllUsage(): Promise<void> {
  * 签到。`id` 缺省 = 全部可签到账号串行签到；指定 id = 单账号签到。
  * 目标集合只用「有签到概念 + 国内版」的账号（后端同样只把国际版排除在外，
  * **不看启用状态**）。
+ *
+ * 只发请求、不动任何界面缓存：结果的呈现由调用方决定（行上按钮的状态 + toast，
+ * 见 `runCheckin` / `checkinAll`）—— 签到**没有明细面板**，别在这里挂面板状态。
  */
 export async function checkinFor(id?: string | null): Promise<{
   results?: Array<Record<string, unknown>>
@@ -370,37 +388,35 @@ export async function checkinFor(id?: string | null): Promise<{
   total?: number
   skipped?: number
 } | null | undefined> {
-  const data = await shared().workbuddyDesktop?.checkinAllAccounts?.(id || null)
-  const rows = Array.isArray(data?.results) ? data.results : []
-  const entryOf = (row: Record<string, unknown>): CheckinEntry => {
-    if (row.error) return String(row.error)
-    if (row.claim) return row.claim as CheckinEntry
-    return '签到响应为空'
-  }
-  if (id) {
-    const row = rows.find(item => item.id === id) || rows[0]
-    if (!row) checkinMap.set(id, '未返回签到结果')
-    else checkinMap.set(id, entryOf(row))
-  } else {
-    for (const row of rows) {
-      if (!row?.id) continue
-      checkinMap.set(String(row.id), entryOf(row))
-    }
-    const returned = new Set(rows.map(row => String(row.id)))
-    for (const account of checkinableAccounts(allAccounts())) {
-      if (!returned.has(account.id)) checkinMap.set(account.id, '未返回签到结果')
-    }
-  }
-  bump()
-  return data
+  return shared().workbuddyDesktop?.checkinAllAccounts?.(id || null)
 }
 
-/** 批量签到（工具条「全部签到」）。结果要看得见，所以同时把明细行展开。 */
+/**
+ * 一行签到结果的分类。三种结局互斥，判据只看 claim 的两个布尔：
+ *   - `ok`：本次真的领到了（`claim.success === true`）；
+ *   - `already`：上游说今天已经领过了（`claim.alreadyCompleted === true`）——
+ *     **不是失败**：一天里大部分时候点签到都是这个结果，报红会把正常状态说成故障；
+ *   - `failed`：其余（`row.error` 后端分派层报的错、`claim.success === false` 且
+ *     不是已领取、完全没返回结果），原因取 msg。
+ */
+type CheckinOutcome = { kind: 'ok' | 'already' | 'failed'; reason: string }
+
+function checkinOutcomeOf(row: Record<string, unknown> | undefined): CheckinOutcome {
+  if (!row) return { kind: 'failed', reason: '未返回签到结果' }
+  if (row.error) return { kind: 'failed', reason: String(row.error) }
+  const claim = row.claim as Record<string, unknown> | null | undefined
+  if (!claim) return { kind: 'failed', reason: '签到响应为空' }
+  if (claim.success === true) return { kind: 'ok', reason: '' }
+  if (claim.alreadyCompleted === true) return { kind: 'already', reason: '' }
+  return { kind: 'failed', reason: String(claim.msg || '未领取') }
+}
+
+/** 批量签到（工具条「全部签到」）。结果只走 toast —— 没有明细面板可展开。 */
 export async function checkinAll(): Promise<void> {
   if (getStore().checkinBusy) return
   const targets = checkinableAccounts(allAccounts())
   if (!targets.length) {
-    toast('暂无可签到的账号（签到仅限 WorkBuddy 国内版 / 小浣熊 / AutoClaw）', 'err')
+    toast('暂无可签到的账号（签到仅限 WorkBuddy 国内版 / 小浣熊 / AutoClaw / Qoder 中国版）', 'err')
     return
   }
   if (!(await shared().wbConfirm?.ask?.({
@@ -410,18 +426,37 @@ export async function checkinAll(): Promise<void> {
     bodyClass: '',
   }))) return
   patch({ checkinBusy: true })
-  targets.forEach(account => checkinMap.set(account.id, null))
-  openPanelsFor(targets.map(account => account.id), 'checkin')
   try {
     const data = await checkinFor(null)
-    const succeeded = data?.succeeded ?? 0
-    const total = data?.total ?? 0
+    const rows = Array.isArray(data?.results) ? data.results : []
+    const byId = new Map(rows.map(row => [String(row?.id || ''), row]))
+    let ok = 0
+    let already = 0
+    const failed: string[] = []
+    for (const account of targets) {
+      const outcome = checkinOutcomeOf(byId.get(account.id))
+      if (outcome.kind === 'ok') {
+        ok += 1
+        checkinErrors.delete(account.id)
+      } else if (outcome.kind === 'already') {
+        already += 1
+        checkinErrors.delete(account.id)
+      } else {
+        failed.push(`${displayNameOf(account) || account.id}：${outcome.reason}`)
+        checkinErrors.set(account.id, outcome.reason)
+      }
+    }
+    bump()
+    // 失败详情：个数 + 第一条原因（各账号自己的原因记进按钮 title，可逐个悬停复看）
+    const parts = [`成功领取 ${ok} 个`]
+    if (already) parts.push(`今日已领取 ${already} 个`)
+    if (failed.length) parts.push(`未领取 ${failed.length} 个（首个：${failed[0]}）`)
     const skipped = Number(data?.skipped) || 0
-    toast(`签到完成：${succeeded}/${total} 个账号成功领取`
-      + (skipped ? `（跳过 ${skipped} 个国际版 / 所属家无签到的账号）` : ''), succeeded < total ? 'err' : 'ok')
+    toast(`签到完成：${parts.join('，')}`
+      + (skipped ? `；跳过 ${skipped} 个国际版 / 所属家无签到的账号` : ''), failed.length ? 'err' : 'ok')
   } catch (error) {
     const message = errorMessage(error)
-    targets.forEach(account => checkinMap.set(account.id, `签到失败：${message}`))
+    targets.forEach(account => checkinErrors.set(account.id, message))
     bump()
     toast(`签到失败：${message}`, 'err')
   } finally {
@@ -433,23 +468,34 @@ export async function checkinAll(): Promise<void> {
 }
 
 /**
- * 单个账号签到：展开明细 → 请求 → 就地刷新结果 → 重拉账号状态。
- * 重拉的理由与批量那条相同（checkinAt 是后端落的）。
+ * 单个账号签到：请求 → toast 结果 → 重拉账号状态（`checkinAt` 由后端落盘）。
+ *
+ * 三种结局各自的落点（见 `checkinOutcomeOf`）：
+ *   - 成功 → toast ✅，按钮随即变成「已签到」；
+ *   - 今日已领取 → 中性 toast（正常状态，不是故障），按钮同样变「已签到」；
+ *   - 未领取 → toast 原因 + 把它记进按钮 title（toast 会消失，原因要能复看）。
  */
 export async function runCheckin(id: string): Promise<void> {
-  checkinMap.set(id, null)
-  bump()
+  const label = displayNameOf(findAccount(id)) || id
   try {
-    await checkinFor(id)
-    const entry = checkinMap.get(id)
-    if (typeof entry === 'string') toast(`签到失败：${entry}`, 'err')
-    else if (entry?.success) toast('✅ 该账号签到成功')
-    else if (entry?.msg) toast(entry.msg, 'err')
+    const data = await checkinFor(id)
+    const rows = Array.isArray(data?.results) ? data.results : []
+    const row = rows.find(item => item?.id === id) || rows[0]
+    const outcome = checkinOutcomeOf(row)
+    if (outcome.kind === 'failed') {
+      checkinErrors.set(id, outcome.reason)
+      toast(`签到失败：${label}：${outcome.reason}`, 'err')
+    } else {
+      checkinErrors.delete(id)
+      toast(outcome.kind === 'already' ? `${label}：今日已领取` : `✅ ${label} 签到成功`, 'ok')
+    }
+    bump()
     void shared().wbApp?.refresh?.()
   } catch (error) {
-    checkinMap.set(id, errorMessage(error))
+    const message = errorMessage(error)
+    checkinErrors.set(id, message)
     bump()
-    toast(`签到失败：${errorMessage(error)}`, 'err')
+    toast(`签到失败：${label}：${message}`, 'err')
   }
 }
 
