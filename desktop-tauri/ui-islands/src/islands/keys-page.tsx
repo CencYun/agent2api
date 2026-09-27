@@ -506,8 +506,8 @@ function KeyModal({ target, providers, modelsByProvider, onClose, onSaved }: Key
                 onChange={event => setName(event.currentTarget.value)} />
             </div>
             {/* 编辑形态**不渲染** Key 输入行：那一行在改范围时没有意义（Key 值不可改）。
-                条件渲染而不是 hidden 属性 —— 组件库的工具类带 !important 且在 @layer
-                utilities，会压过未分层的 [hidden]{display:none}。 */}
+                这里既没有常驻需求也没有状态要保，条件渲染最省事 —— 属性式显隐留给
+                节点必须常驻的场合（组件库 globals.css 的 [hidden][hidden] 已给它兜底）。 */}
             {!editing && (
               <div className='flex flex-wrap items-center gap-2.5'>
                 <Label htmlFor='key-value' className='text-[12.5px] whitespace-nowrap text-subtle'>Key</Label>

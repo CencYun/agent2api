@@ -20,6 +20,10 @@ import { Button } from './button'
  * 弹窗宽 min(620px, 100%)、--r-lg 圆角、--shadow-3 投影；入场是「淡入 + 上移 10px
  * 收 1.5%」，出场反向。z-index 取 30（与 .modal-mask 同档，轻提示在 40 之上）。
  *
+ * 出场动画挂 `fill-mode-forwards`：tw-animate 默认 fill-mode:none，动画一结束元素就
+ * 弹回原样（不透明），而 Base UI 要等动画结束那个微任务里才把内容藏起来 —— 中间这
+ * 一帧就是「关窗闪一下」。forwards 让它停在动画末帧（opacity 0）上，等隐藏接手。
+ *
  * 交互交给 Base UI 的 Dialog：焦点陷阱、Esc 关闭、滚动锁定、aria-modal 与
  * 关闭后焦点归位全部内建。
  */
@@ -56,7 +60,7 @@ function DialogOverlay({ className, ...props }: DialogPrimitive.Backdrop.Props) 
         'fixed inset-0 isolate z-30 bg-mask backdrop-blur-[3px]',
         'transition-opacity duration-150',
         'data-open:animate-in data-open:fade-in-0',
-        'data-closed:animate-out data-closed:fade-out-0',
+        'data-closed:animate-out data-closed:fade-out-0 data-closed:fill-mode-forwards',
         className
       )}
       {...props}
@@ -77,6 +81,18 @@ type DialogContentProps = DialogPrimitive.Popup.Props & {
    * 键盘与读屏不会跑进去）。
    */
   keepMounted?: boolean
+  /**
+   * 嵌在另一层弹窗里时也画自己那层遮罩，默认 false。
+   *
+   * Base UI 的嵌套约定是「子层不画遮罩」，好让父层干净地留在后面（见 DialogBackdrop
+   * 的 `enabled: forceRender || !nested`）。但两件事要落在遮罩上：
+   *   · 压暗整个下层（含父弹窗）—— 没有遮罩就只有换了个框，层叠感靠不住；
+   *   · 点空白处关闭这一层（useDialogRoot 的 outsidePress 认的就是遮罩本身：
+   *     `backdrop === target`），没有遮罩时点空白处什么都不会发生。
+   * 子层的遮罩排在父层 Popup 之后，颜色与模糊与普通弹窗同一套，因此父层是被压暗
+   * 的一层、子层浮在上面。
+   */
+  overlayForceRender?: boolean
 }
 
 function DialogContent({
@@ -84,11 +100,12 @@ function DialogContent({
   children,
   showCloseButton = true,
   keepMounted = false,
+  overlayForceRender = false,
   ...props
 }: DialogContentProps) {
   return (
     <DialogPortal keepMounted={keepMounted}>
-      <DialogOverlay />
+      <DialogOverlay forceRender={overlayForceRender} />
       <DialogPrimitive.Popup
         data-slot='dialog-content'
         className={cn(
@@ -96,7 +113,7 @@ function DialogContent({
           'overflow-hidden rounded-lg border border-border bg-surface shadow-3 outline-none',
           'transition-[opacity,transform] duration-200 [transition-timing-function:cubic-bezier(.2,.9,.3,1)]',
           'data-open:animate-in data-open:fade-in-0 data-open:zoom-in-[.985] data-open:slide-in-from-bottom-2.5',
-          'data-closed:animate-out data-closed:fade-out-0',
+          'data-closed:animate-out data-closed:fade-out-0 data-closed:fill-mode-forwards',
           className
         )}
         {...props}

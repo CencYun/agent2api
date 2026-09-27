@@ -166,11 +166,9 @@ export function CustomProviderBlock({
   const anthropic = protocol === 'anthropic'
   const baseHint = baseHintOverride || (anthropic ? BASE_HINT_ANTHROPIC : BASE_HINT_OPENAI)
 
-  const sectionStyle = (visible: boolean): React.CSSProperties => (visible ? {} : { display: 'none' })
-
   return (
     <>
-      <DialogSection style={sectionStyle(mode === 'create')}>
+      <DialogSection hidden={mode !== 'create'}>
         <div className='add-panel-head'>
           <h3>上游信息</h3>
           <span>创建这个提供商，并同时建立它的第一个账号。</span>
@@ -242,7 +240,7 @@ export function CustomProviderBlock({
         </div>
       </DialogSection>
 
-      <DialogSection style={sectionStyle(mode === 'existing')}>
+      <DialogSection hidden={mode !== 'existing'}>
         <div className='add-panel-head'>
           <h3>账号信息</h3>
           <span>
@@ -418,7 +416,7 @@ export function CustomFootActions({
         {/* 两颗主按钮都常驻、按模式切显隐（与旧实现一致：文案与提交函数成对写在一处） */}
         <Button
           id={CREATE_BUTTON_ID}
-          style={mode === 'create' ? undefined : { display: 'none' }}
+          hidden={mode !== 'create'}
           disabled={busy}
           onClick={() => { void submitCreate(context) }}
         >
@@ -426,7 +424,7 @@ export function CustomFootActions({
         </Button>
         <Button
           id={EXISTING_BUTTON_ID}
-          style={mode === 'existing' ? undefined : { display: 'none' }}
+          hidden={mode !== 'existing'}
           disabled={busy}
           onClick={() => { void submitExisting(context) }}
         >

@@ -180,10 +180,7 @@ function AddAccountModal({
     // 第 1 步：选提供商。受控 open（恒为 true）：本岛是「打开时建、关闭即卸」，
     // 关窗一律由 onClose 收口（Esc / 点遮罩 / ✕ 都由 Base UI 汇到 onOpenChange）。
     //
-    // 第 2 步（表单层）**写在它里面**：Base UI 靠 React 树上的父子关系认「嵌套弹窗」
-    // —— 只有认出来，内层开着时外层的 Esc 与遮罩按压才不生效（见 useDialogRoot 的
-    // `escapeKey: isTopmost`）。写成平级的话两层都以为自己是顶层，Esc 会把整个弹窗
-    // 关掉，而不是「先回到列表」。
+    // 第 2 步（表单层）写在 **DialogContent 的 children 里**（见下面那段 Dialog）。
     <Dialog open onOpenChange={next => { if (!next) onClose() }}>
       <DialogContent className='w-[min(880px,calc(100vw-48px))]'>
         <DialogHeader>
@@ -210,60 +207,75 @@ function AddAccountModal({
             <ImportFootActions />
           </DialogFooter>
         ) : null}
-      </DialogContent>
 
-      {/* 第 2 步：选方式 + 填凭证。叠在列表弹窗之上的一层，宽度窄一档
-          （表单输入框横跨 800px 只是把字拉散；窄一档顺带强化层叠感）。
-          keepMounted：这一层收起时**不卸载** —— 里面的登录引擎把状态放在自己的闭包里
-          （短信那一步的 deviceId、发码冷却），节点一卸就等于把「刚发出去的验证码绑在
-          哪个 deviceId 上」丢掉，用户「发码 → 退回列表 → 再进来填码」会拿到作废的 id。
-          隐藏时 Base UI 会把内容标记为 inert，键盘与读屏不会跑进去。 */}
-      <Dialog open={state.step === 'form'} onOpenChange={next => { if (!next) backToPick() }}>
-        <DialogContent keepMounted className='w-[min(620px,calc(100vw-48px))]'>
-          <DialogHeader>
-            <DialogTitle>{heading}</DialogTitle>
-          </DialogHeader>
-          <DialogBody>
-            {/* 各家的块整块常驻、只切显隐：块内的登录引擎把状态放在自己的闭包里，
-                节点被卸载就等于把「刚发出去的验证码绑在哪个 deviceId 上」丢掉 */}
-            <WorkBuddyBlock active={state.provider === WORKBUDDY_PROVIDER} />
-            {BUILTIN_CONFIGS.map(item => (
-              <ProviderBlock
-                key={item.provider}
-                config={item}
-                active={state.provider === item.provider}
-              />
-            ))}
-            <div
-              className='add-provider-block'
-              style={isCustom ? undefined : { display: 'none' }}
-            >
-              <CustomProviderBlock
-                mode={customMode}
-                providerHint={state.providerHint}
-                presetKey={state.presetKey}
-                showToken={state.showToken}
-                version={version}
-              />
-            </div>
-            {hasBlock ? null : (
-              <div className='add-provider-block'>
-                <DialogSection>
-                  <h3>该提供商账号添加功能即将上线</h3>
-                  <p>{`「${providerLabel}」的账号添加功能还在开发中，敬请期待。`}</p>
-                </DialogSection>
+        {/* 第 2 步：选方式 + 填凭证。叠在列表弹窗之上的一层，宽度窄一档
+            （表单输入框横跨 800px 只是把字拉散；窄一档顺带强化层叠感）。
+
+            位置是这一层能不能「叠在上面」的关键，两条都要满足：
+              · React 父子关系 —— Base UI 据此认「嵌套弹窗」（见 useDialogRoot 的
+                parentStore），内层开着时外层的 Esc 与遮罩按压才不生效；
+              · 挂在**本 DialogContent 的 children** 里 —— 内层 Dialog 渲染在外层
+                Popup 的子树中，它自己的 Portal 才会落进外层 Portal 节点、排在 Popup
+                之后（Base UI 的嵌套弹窗就是靠这个先后来分层的）。写成与 DialogContent
+                平级时内层 Portal 会挂到 body 上，两层同为 z-30，谁在 DOM 里靠后谁在
+                上面 —— 于是表单层被压在提供商列表下面。
+
+            keepMounted：这一层收起时**不卸载** —— 里面的登录引擎把状态放在自己的闭包里
+            （短信那一步的 deviceId、发码冷却），节点一卸就等于把「刚发出去的验证码绑在
+            哪个 deviceId 上」丢掉，用户「发码 → 退回列表 → 再进来填码」会拿到作废的 id。
+            隐藏时 Base UI 会把内容标记为 inert，键盘与读屏不会跑进去。
+
+            overlayForceRender：这一层要有自己的遮罩（压暗下面的列表层 + 点空白处
+            退回列表，与旧实现 #add-form-modal 那层遮罩同义）。Base UI 对嵌套弹窗默认
+            不画子层遮罩，遮罩同时是「点空白处」的落点（useDialogRoot 的 outsidePress
+            认遮罩本身），所以这一档不能省。 */}
+        <Dialog open={state.step === 'form'} onOpenChange={next => { if (!next) backToPick() }}>
+          <DialogContent keepMounted overlayForceRender className='w-[min(620px,calc(100vw-48px))]'>
+            <DialogHeader>
+              <DialogTitle>{heading}</DialogTitle>
+            </DialogHeader>
+            <DialogBody>
+              {/* 各家的块整块常驻、只切显隐：块内的登录引擎把状态放在自己的闭包里，
+                  节点被卸载就等于把「刚发出去的验证码绑在哪个 deviceId 上」丢掉 */}
+              <WorkBuddyBlock active={state.provider === WORKBUDDY_PROVIDER} />
+              {BUILTIN_CONFIGS.map(item => (
+                <ProviderBlock
+                  key={item.provider}
+                  config={item}
+                  active={state.provider === item.provider}
+                />
+              ))}
+              <div
+                className='add-provider-block'
+                style={isCustom ? undefined : { display: 'none' }}
+              >
+                <CustomProviderBlock
+                  mode={customMode}
+                  providerHint={state.providerHint}
+                  presetKey={state.presetKey}
+                  showToken={state.showToken}
+                  version={version}
+                />
               </div>
-            )}
-          </DialogBody>
-          {/* 表单弹窗这条操作条归自定义块（它把自己的主按钮搬进来）；内置家的主按钮
-              仍在各自段落里，因此只有自定义块在场时才渲染这条 */}
-          {isCustom ? (
-            <DialogFooter>
-              <CustomFootActions mode={customMode} presetKey={state.presetKey} />
-            </DialogFooter>
-          ) : null}
-        </DialogContent>
-      </Dialog>
+              {hasBlock ? null : (
+                <div className='add-provider-block'>
+                  <DialogSection>
+                    <h3>该提供商账号添加功能即将上线</h3>
+                    <p>{`「${providerLabel}」的账号添加功能还在开发中，敬请期待。`}</p>
+                  </DialogSection>
+                </div>
+              )}
+            </DialogBody>
+            {/* 表单弹窗这条操作条归自定义块（它把自己的主按钮搬进来）；内置家的主按钮
+                仍在各自段落里，因此只有自定义块在场时才渲染这条 */}
+            {isCustom ? (
+              <DialogFooter>
+                <CustomFootActions mode={customMode} presetKey={state.presetKey} />
+              </DialogFooter>
+            ) : null}
+          </DialogContent>
+        </Dialog>
+      </DialogContent>
     </Dialog>
   )
 }
