@@ -16,6 +16,7 @@ import {
   Switch,
   type MultiSelectOption,
 } from '@ui'
+import { TableFooter, useClientPaging } from './table-shell'
 
 /**
  * Agent2API · 网关 Key 页（列表 / 新建 / 启停 / 删除 / 可用范围）—— React 岛。
@@ -725,7 +726,10 @@ function KeysPage() {
 
   /* ─── 渲染 ─────────────────────────────── */
 
-  const list = keysOf(data)
+  const keys = keysOf(data)
+  /** 客户端分页（通用表格外壳）：Key 通常只有几把，但口径与其它四张表保持一致 */
+  const paging = useClientPaging(keys.length, 'keys')
+  const list = paging.paged ? paging.slice(keys) : keys
   const columns = visibleColumns()
   const authRequired = data?.authRequired === true
   const enabledCount = list.filter(item => item.enabled).length
@@ -845,15 +849,24 @@ function KeysPage() {
         </table>
       </div>
 
-      <div className='panel-foot'>
-        <span>
-          客户端请求需带 <code>{'Authorization: Bearer <key>'}</code> 或 <code>{'x-api-key: <key>'}</code>；
-          修改后立即生效，本程序自身会自动使用第一把启用的 Key。每把 Key 可单独限制
-          <b>可用提供商</b>与<b>可用模型</b>（行内「可用范围」）：留空 = 不限制，两个都设时
-          按交集生效 —— 被限制的模型对这把 Key 表现为「不存在」（拉 /v1/models 也看不到它），
-          提供它的家不在可用列表里时请求同样被拒。
-        </span>
-      </div>
+      <TableFooter
+        leading={(
+          <span>
+            客户端请求需带 <code>{'Authorization: Bearer <key>'}</code> 或 <code>{'x-api-key: <key>'}</code>；
+            修改后立即生效，本程序自身会自动使用第一把启用的 Key。每把 Key 可单独限制
+            <b>可用提供商</b>与<b>可用模型</b>（行内「可用范围」）：留空 = 不限制，两个都设时
+            按交集生效 —— 被限制的模型对这把 Key 表现为「不存在」（拉 /v1/models 也看不到它），
+            提供它的家不在可用列表里时请求同样被拒。
+          </span>
+        )}
+        total={keys.length}
+        range={paging.paged ? { start: paging.rangeStart, end: paging.rangeEnd } : null}
+        page={paging.page}
+        pageCount={paging.pageCount}
+        size={paging.size}
+        onSizeChange={paging.setSize}
+        onPageChange={paging.goto}
+      />
 
       {modal ? (
         <KeyModal

@@ -75,6 +75,8 @@ export type SettingsBridge = {
   getCaptchaSetting(): Promise<{ captchaEnabled?: boolean } | null | undefined>
   saveCaptchaSetting(on: boolean): Promise<{ captchaEnabled?: boolean } | null | undefined>
   panelLogout(): Promise<unknown>
+  /** 打开外链的唯一出口（只放行 http(s)）：桌面走系统浏览器，网页端 shim 是 window.open */
+  openReleasePage?(url: string): Promise<unknown>
 }
 
 /**
@@ -93,11 +95,17 @@ export type SharedWindow = {
     refresh?: () => Promise<void> | void
     /** 当前页标识：脚本加载时若已停在设置页，补一次 load() */
     readonly currentPage?: string
+    /** 应用显示模式（system / light / dark）：实现与持久化都在 app.js，本页只调用 */
+    applyTheme?: (mode: string) => void
+    /** 应用界面缩放（传百分数，如 105）：由 app.js 落到 WebView 层并记档 */
+    applyZoom?: (percent: number) => void
   }
   /** Token 计量单位的展示口径（units.js）：本页只负责拨开关，格式化在那边 */
   wbUnits?: { isChinese?: () => boolean; setChinese?: (on: boolean) => void }
   /** 软件更新面板的岛（update-panel.tsx）：切到设置页时让它自己刷新一次 */
   wbUpdatePanel?: { load?: () => Promise<void> | void }
+  /** 内联图标集（icons.js）：左栏分类图标由它渲染（返回 SVG 串，注入用） */
+  wbIcons?: { icon?: (name: string, size?: number) => string }
 }
 
 export function shared(): SharedWindow {
@@ -113,18 +121,54 @@ export function toast(message: string, kind?: 'err' | 'ok'): void {
   shared().wbApp?.toast?.(message, kind)
 }
 
+/**
+ * 打开外链：一律交给系统默认浏览器（桌面走壳命令 `open_release_page`，网页端
+ * shim 把它映射成 window.open）—— 与 update-shared 的同名函数是**两份实现**，
+ * 不跨族 import 是刻意的：这里服务设置页（反馈与需求），那边服务更新面板一族，
+ * 各自只依赖自己那份桥类型；但也别再加第三份，要用先从这两处挑。
+ */
+export async function openExternal(url: string): Promise<void> {
+  try {
+    await shared().workbuddyDesktop?.openReleasePage?.(url)
+  } catch (error) {
+    toast(`打开链接失败：${errorMessage(error)}`, 'err')
+  }
+}
+
 /* ─── 分类与偏好键 ─────────────────────────── */
 
 /**
  * 左侧分类。顺序 = 界面顺序；showCategory 用它校验传进来的值（旧实现是查 DOM，
  * 这里改成查这份表 —— 分类不再由 HTML 声明，而是本页渲染出来的）。
+ *
+ * 「重试」「超时」从「网关」里拆出来独立成菜单（原先挤在网关一栏里，排在排队等待
+ * 两侧）：这两组是**每次转发都会读**的网络行为参数，出问题时最常被翻，单独一栏
+ * 少一次翻找。数据加载本就不分分类（settings-state 的 load 一次并行取全部），
+ * 拆分只是视图层的两段搬迁。
+ *
+ * 「显示」紧跟「通用」：显示模式 / 界面缩放 / 语言都是**纯前端偏好**（存在
+ * localStorage 里，与主题同族），不碰后端配置 —— 放在最前面那几栏里最顺手。
+ *
+ * 「反馈与需求」是纯跳转面板（三个 GitHub issue 表单入口，见 settings-page 的
+ * FeedbackPane），排在「更新」上面 —— 都是「对外」的两栏，挨着放。
+ *
+ * `icon` 是 icons.js 里那组设置页分类图标的键（描边风格，见那边的说明）；标签
+ * 不再受两字限制，图标负责在窄栏里一眼认出，文字负责说清。
+ *
+ * 「更新」（原「关于」）**id 保持 `about` 不变**：它同时是 update-panel.tsx 的挂载点
+ * 选择器（`.settings-pane[data-cat="about"]`）与用户 localStorage 里存着的分类值，
+ * 改名会让两者当场失配 —— 用户看到的只是标签，id 是内部契约。
  */
 export const CATEGORIES = [
-  { id: 'general', label: '通用' },
-  { id: 'gateway', label: '网关' },
-  { id: 'security', label: '安全' },
-  { id: 'data', label: '数据' },
-  { id: 'about', label: '关于' },
+  { id: 'general', label: '通用', icon: 'sliders' },
+  { id: 'display', label: '显示', icon: 'display' },
+  { id: 'gateway', label: '网关', icon: 'traffic' },
+  { id: 'retry', label: '重试', icon: 'refresh' },
+  { id: 'timeout', label: '超时', icon: 'timer' },
+  { id: 'security', label: '安全', icon: 'shield' },
+  { id: 'data', label: '数据', icon: 'database' },
+  { id: 'feedback', label: '反馈与需求', icon: 'feedback' },
+  { id: 'about', label: '更新', icon: 'download' },
 ] as const
 
 /**
@@ -132,6 +176,85 @@ export const CATEGORIES = [
  * 主进程不参与。键名沿用旧实现的取值，别改 —— 否则用户上次停留的分类会丢。
  */
 export const SETTINGS_CAT_KEY = 'workbuddy-desktop-settings-cat'
+
+/* ─── 显示偏好（「显示」分类） ───────────────── */
+
+/**
+ * 「显示」分类的三项偏好：显示模式 / 界面缩放 / 语言。
+ *
+ * ⚠ 前两项的**应用入口都不在本页**，而在 ui/app.js（applyTheme / applyZoom）：
+ *   · 主题还要同步操作系统标题栏的深浅色，并处理「跟随系统」时窗口主题会污染
+ *     WebView 颜色偏好的问题（那段长注释在 app.js）；
+ *   · 缩放要走 WebView 层（壳命令 set_zoom），不是页面自己能做完的事。
+ * 本页只做两件事：**读** localStorage 把控件摆到当前值上；改动时调
+ * `wbApp.applyTheme / applyZoom`，再靠 'wb:theme' / 'wb:zoom' 事件跟随 ——
+ * 侧边栏的主题三键与这里的档位是同一个设置的两个入口，必须互相同步。
+ *
+ * 键名与 app.js 里的字面量是同一份契约（两侧各写一份，改一处必然漂）；
+ * 事件名同理（app.js 派发，本页监听）。
+ */
+export const THEME_KEY = 'workbuddy-desktop-theme'
+export const ZOOM_KEY = 'workbuddy-desktop-zoom'
+export const THEME_EVENT = 'wb:theme'
+export const ZOOM_EVENT = 'wb:zoom'
+
+/** 缩放档位边界与步长：与 app.js 的 ZOOM_MIN / ZOOM_MAX / ZOOM_STEP 同源 */
+export const ZOOM_MIN = 80
+export const ZOOM_MAX = 130
+export const ZOOM_STEP = 5
+
+/** 缩放候选项（80% ~ 130%，5% 一档共 11 档）：下拉的 value 就是百分数本身 */
+export const ZOOM_PERCENTS: number[] = Array.from(
+  { length: (ZOOM_MAX - ZOOM_MIN) / ZOOM_STEP + 1 },
+  (_, index) => ZOOM_MIN + index * ZOOM_STEP,
+)
+
+/**
+ * 显示模式三档：value 与 app.js / `data-theme` 的取值逐字一致（system / light / dark）。
+ * 文案取侧边栏那三个按钮的 title（跟随设备 → 跟随系统，是同一件事的两种叫法，
+ * 这里用了更书面的一种）。
+ */
+export const THEME_MODES = [
+  { value: 'system', label: '跟随系统' },
+  { value: 'light', label: '浅色' },
+  { value: 'dark', label: '深色' },
+] as const
+
+/** 显示模式取值（SegmentedControl 的泛型参数要用它，免得在视图里转字面量联合） */
+export type ThemeMode = (typeof THEME_MODES)[number]['value']
+
+/**
+ * 语言选项：目前只有简体中文一种，先摆成单选题把位置占住（用户明确要的形态）。
+ * 不做持久化 —— 界面文案现在全是写死的中文，选了也不改变任何东西；真加语言时
+ * 这里就是唯一要长出来的地方（值改成 BCP 47 标签，如 zh-CN / en）。
+ */
+export const LANGUAGES = [{ value: 'zh-CN', label: '简体中文' }] as const
+
+/** 读当前显示模式（app.js 是写入方）：读到非法值按跟随系统 */
+export function readThemeMode(): ThemeMode {
+  try {
+    const mode = localStorage.getItem(THEME_KEY)
+    return mode === 'light' || mode === 'dark' ? mode : 'system'
+  } catch {
+    return 'system'
+  }
+}
+
+/** 读当前缩放（百分数）：非法 / 越界值回落 100，与 app.js 的 storedZoom 同一口径 */
+export function readZoomPercent(): number {
+  try {
+    const text = localStorage.getItem(ZOOM_KEY)
+    // 空串 / 缺失要单独挡：Number('') 与 Number(null) 都是 0（不是 NaN），
+    // 不挡就会被当成「0%」一路夹到 80% —— 「没设过」必须等于默认的 100%
+    if (text === null || text.trim() === '') return 100
+    const raw = Number(text)
+    if (!Number.isFinite(raw)) return 100
+    const snapped = Math.round(raw / ZOOM_STEP) * ZOOM_STEP
+    return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, snapped))
+  } catch {
+    return 100
+  }
+}
 
 /* ─── 数字字段表 ───────────────────────────── */
 
@@ -381,6 +504,9 @@ export function formatCount(value: unknown): string {
 
 /** 标题右侧问号（`[data-tip]`）的说明全文：tooltip.js 仍在页面上跑，照旧服务这些元素 */
 export const TIPS = {
+  displayTheme: '控制界面的深浅色，与左侧边栏底部的三个主题按钮是同一个设置（改哪一处，另一处立刻跟上）。「跟随系统」会随操作系统当前的浅色 / 深色自动切换，并在系统主题变化时即时跟上；选「浅色」或「深色」则把界面固定在该模式，不再随系统变化。窗口标题栏的深浅色会一并同步，不会出现深色界面配一条浅色标题栏的情况。',
+  displayZoom: '等比放大或缩小整个界面（文字、控件、间距一起变），效果与浏览器按 Ctrl +/- 相同：80%–130%、5% 一档。窗口本身不缩放，变的是页面内容的显示比例，设置立即生效并记住，下次启动直接按这个比例打开。放得越大可视范围越小，窗口较窄或表格较宽时不建议调得太大。',
+  displayLanguage: '界面语言。目前只提供简体中文，所以这里只有这一项可选（选中即当前语言）。以后增加其它语言时，这个列表里会出现对应选项，选择后立即应用到界面。',
   tray: '默认关闭窗口不会退出程序，而是把窗口缩到系统托盘，转发继续在后台运行（OpenAI 客户端不受影响）；要彻底退出程序，请在托盘图标上右键选「退出」。关掉这个开关后，点关闭按钮即退出程序、转发随之中断。「开机自动启动」开启后，登录系统时会自动启动本程序（通常直接驻留托盘），不需要手动打开。',
   units: '控制报表与请求日志里 Token 读数的写法：开启后按中文量级显示（1.2亿 / 8400万），关闭则用 k / M 缩写（与上游文档、接口字段的写法一致）。这只影响显示口径，不改变任何统计与存储的数值。',
   queue: '只对「排队制」的上游生效（目前是 Qoder 的免费模型）：模型繁忙时上游不报错，只回一句「建议 N 秒后再来」（业务码 10605），网关按建议时长等一会儿再发同一请求，等满次数仍排不上才把「排队中」作为错误返回（HTTP 503，文案会说明这不是登录态或额度问题）。等待发生在首个字节之前，吃的是「等待响应超时」那份预算 —— 两项设置一起决定一次请求最多卡多久；排队不会标记账号限额、也不会换账号（换谁都一样在排队）。保存后对下一个请求立即生效，不用重启。',
@@ -430,4 +556,11 @@ export const STATES = {
   sanitizeOff: '未开启，客户端 system 模板会原样发往上游，可能被内容审核误拦（400）。',
   promptUnavailable: '未能读取系统提示词设置，请稍后重试',
   degradeUntilFallback: '次日 00:00',
+  // ── 显示分类（本次新增：不来自静态骨架，是新写的文案）──
+  themeSystem: '当前跟随操作系统的深浅色设置，系统切换时界面会自动跟上。',
+  themeLight: '当前固定为浅色模式，不随系统变化。',
+  themeDark: '当前固定为深色模式，不随系统变化。',
+  zoomWeb: '网页端的界面缩放由浏览器自己控制（Ctrl + / Ctrl -，或浏览器菜单里的缩放），此项不可调。',
+  zoomDefault: '当前按 100% 显示（默认比例）。',
+  languageOnly: '当前界面语言为简体中文（目前仅提供这一种）。',
 } as const

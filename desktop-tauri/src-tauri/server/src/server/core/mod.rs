@@ -53,6 +53,7 @@ pub mod auth;
 pub mod auth_http;
 pub mod auto_checkin;
 pub mod billing;
+pub mod capability;
 pub mod clash;
 pub mod credential_maintenance;
 pub mod custom_providers;

@@ -263,7 +263,7 @@ function endBusy(): void {
  * localStorage、也可能来自被改过的调用方，不存在就回落到第一个，保证任何时候都有一类展开。
  * 滚回顶部交给视图层（快照里的 scrollReset）。
  *
- * 刻意**不写** localStorage：update-panel 的「去更新」深链会调它切到「关于」，
+ * 刻意**不写** localStorage：update-panel 的「去更新」深链会调它切到「更新」，
  * 那不该改用户手点的默认分类（写偏好的是 selectCategory）。
  */
 export function showCategory(category?: string | null): void {

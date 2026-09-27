@@ -72,6 +72,52 @@ function applyTheme(mode) {
   document.querySelectorAll('#theme-switch button').forEach(item => {
     item.classList.toggle('active', item.dataset.mode === mode);
   });
+  // 通知其它控制面（设置页「显示 → 显示模式」那组档位）：主题有两个入口
+  // （侧边栏三键与设置页），谁改了都要让另一处跟上 —— 事件单向广播，
+  // 两边都不去读对方的状态。detail 是本函数最初收到的 mode 原值。
+  window.dispatchEvent(new CustomEvent('wb:theme', { detail: mode }));
+}
+
+// ─── 界面缩放 ────────────────────────────────
+// 「显示 → 界面缩放」：80%–130%、一档 5%（共 11 档，设置页的下拉就是这份口径）。
+//
+// app.js 是缩放的**唯一应用入口**（与主题同一取向）：设置页只调 wbApp.applyZoom
+// 并听 'wb:zoom' 事件，不自己碰 localStorage、也不直接调桥 —— 缩放要落到
+// WebView 层（壳命令 set_zoom，语义与浏览器 Ctrl +/- 相同），那是页面脚本
+// 之外的事，由这里统一转达。
+const ZOOM_KEY = 'workbuddy-desktop-zoom';
+const ZOOM_MIN = 80;
+const ZOOM_MAX = 130;
+const ZOOM_STEP = 5;
+
+/** 从 localStorage 读一个百分数：缺失 / 空白 / 非数字都算「没设过」，返回 null */
+function readStoredPercent(key) {
+  const text = localStorage.getItem(key);
+  // 空串要单独挡：Number('') 是 0（不是 NaN），不挡就会被当成「0%」一路夹到 80%
+  if (text === null || text.trim() === '') return null;
+  const value = Number(text);
+  return Number.isFinite(value) ? value : null;
+}
+
+/** 读上次的缩放（百分数）：越界 / 非档位值 / 读不到一律回落 100（不写回，等下次显式设置） */
+function storedZoom() {
+  const raw = readStoredPercent(ZOOM_KEY);
+  if (raw === null) return 100;
+  const snapped = Math.round(raw / ZOOM_STEP) * ZOOM_STEP;
+  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, snapped));
+}
+
+function applyZoom(percent) {
+  const raw = Number(percent);
+  if (!Number.isFinite(raw)) return;
+  const value = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(raw / ZOOM_STEP) * ZOOM_STEP));
+  localStorage.setItem(ZOOM_KEY, String(value));
+  // 浏览器直开（网页端）时没有桥：可选链静默跳过 —— 那边的缩放归浏览器自己的
+  // Ctrl +/-，设置页同一项也是禁用状态（见 DisplayPane）。
+  try {
+    window.workbuddyDesktop?.setZoom?.(value / 100);
+  } catch { /* 非桌面环境忽略 */ }
+  window.dispatchEvent(new CustomEvent('wb:zoom', { detail: value }));
 }
 
 // ─── 页面导航 ────────────────────────────────
@@ -690,6 +736,10 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () 
   if ((localStorage.getItem('workbuddy-desktop-theme') || 'system') === 'system') applyTheme('system');
 });
 applyTheme(localStorage.getItem('workbuddy-desktop-theme') || 'system');
+// 界面缩放同样在这里落一次（index.html 的头部内联脚本已按同一份 localStorage
+// 抢先交过一次，见那边的说明）：这里这行是**权威**的一次 —— 头部那次只是
+// 尽力而为的反闪烁，若桥当时还没就绪就会静默失败，由这行补齐。
+applyZoom(storedZoom());
 
 api.onStateChanged(next => {
   if (!next?.accounts && !next?.session && !next?.health) return;
@@ -713,6 +763,10 @@ window.wbApp = {
   syncLogsBadge,
   // 软件更新面板在每次检查结束后回调它，把「有新版本」翻译成导航上的提示
   updateUpdateBadge,
+  // 显示偏好（设置页「显示」分类的两个入口）：主题与缩放都只有这一处实现，
+  // 设置页改完调这里，再靠 'wb:theme' / 'wb:zoom' 事件跟随变化
+  applyTheme,
+  applyZoom,
 };
 
 // ─── 账号的自动维护结果 ───────────────────────

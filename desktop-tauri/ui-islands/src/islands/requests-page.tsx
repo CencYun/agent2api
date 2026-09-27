@@ -2,10 +2,18 @@ import * as React from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import {
-  Badge, BadgeDot, Button, Pager, SegmentedControl, Toggle,
+  Badge, BadgeDot, Button, SegmentedControl, Toggle,
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
   type SegmentedControlOption,
 } from '@ui'
+import {
+  DEFAULT_PAGE_SIZE,
+  SERVER_PAGE_SIZES,
+  TableFooter,
+  readPageSize,
+  writePageSize,
+  type PageSizeChoice,
+} from './table-shell'
 
 /**
  * Agent2API · 请求日志页（网关转发明细：筛选 / 分页 / 自动刷新）—— React 岛。
@@ -45,8 +53,9 @@ import {
  * 比 requests-panel.js 先加载」的那一帧等价），挂载后注册、再用 flushSync 按配置重画一次。
  *
  * ── 混合原则 ─────────────────────────────────────────────────
- * 布局类名照旧（.panel / .log-filters / .log-list / .log-pager …，页面 CSS 用它们分配高度与重排）；
- * 控件换成组件库：Button / Badge / Toggle / Pager / Select / SegmentedControl。列表里只有一处
+ * 布局类名照旧（.panel / .log-filters / .log-list …，页面 CSS 用它们分配高度与重排）；
+ * 控件换成组件库：Button / Badge / Toggle / Select / SegmentedControl；页脚分页栏是通用件
+ * （islands/table-shell.tsx，读数 / 每页条数 / 跳页 / 翻页器五张表一套）。列表里只有一处
  * 刻意**不**换：状态列的阶段徽章 —— HTML 由 wbRequestPhase 产出（详情弹窗读同一份，三处逐字
  * 一致是硬要求）。重试列那两枚标签则走 Badge 的 `render`：徽章的观感与「可聚焦、带
  * data-req-hover / data-req-id」两样都要，render 正是组件库为这件事补的出口。
@@ -255,8 +264,18 @@ const COLUMNS: Column[] = [
 
 /** 自动刷新间隔兜底值 = 后端默认间隔（DEFAULT_REQUESTS_AUTO_REFRESH_SECONDS）；实际值由「定时任务」页决定 */
 const DEFAULT_AUTO_REFRESH_MS = 1_000
-/** 每页条数：与后端 DEFAULT_LIMIT 一致（显式传，页数才算得出来） */
-const PAGE_SIZE = 50
+/** 每页条数的档位：与页脚的「每页」下拉同源（不给「全部」，理由见 queryParams） */
+const PAGE_SIZES = SERVER_PAGE_SIZES
+
+/**
+ * 本页的档位里没有「全部」，所以每页条数**恒为数字**；这个折算函数只是把
+ * 通用组件的 `PageSizeChoice` 收成 number，供算术使用（offset/pageCount 都要算）。
+ * 真拿到 'all'（存盘被改坏、或以后误加了档位）就回落默认值，不让它变成 NaN。
+ */
+function numericSize(choice: PageSizeChoice): number {
+  return typeof choice === 'number' && choice > 0 ? choice : DEFAULT_PAGE_SIZE
+}
+
 /** 时间档位的持久化键：沿用拆分前「模型请求」视图的键，用户已选的档位不因拆页丢失 */
 const RANGE_KEY = 'workbuddy-desktop-logs-requests-range'
 /** 三个下拉筛选的跨次启动记忆（空串 = 「全部」） */
@@ -323,6 +342,8 @@ const current = {
   range: readRange(),
   runningOnly: false,
   offset: 0,
+  /** 每页条数：用户可在页脚换档（持久化在 table-shell 的 readPageSize 里，这里存当前值） */
+  size: numericSize(readPageSize('requests', SERVER_PAGE_SIZES)),
 }
 /** 三个筛选的落盘副本（启动时从 wbFilterMemory 读回；见 readSavedFilters） */
 let savedFilters: Filters = { ...DEFAULT_FILTERS }
@@ -436,7 +457,10 @@ function filterParams(): URLSearchParams {
 function queryParams(): string {
   const params = filterParams()
   params.set('offset', String(current.offset))
-  params.set('limit', String(PAGE_SIZE))
+  // 每页条数是**用户可换的档位**（页脚的「每页 N 条」）：后端只要求 limit > 0，
+  // 不给上限，档位由前端收在 SERVER_PAGE_SIZES 里（没有「全部」那一档 —— 明细条数
+  // 无上限，全渲染会把浏览器拖死，见 table-shell 的文件头）
+  params.set('limit', String(current.size))
   return params.toString()
 }
 
@@ -907,6 +931,8 @@ function RequestsPage() {
   const [range, setRange] = React.useState<string>(() => current.range)
   const [runningOnly, setRunningOnly] = React.useState(false)
   const [offset, setOffset] = React.useState(0)
+  /** 每页条数（页脚可换）：模块级 current.size 是权威，这里只是渲染镜像 */
+  const [pageSize, setPageSize] = React.useState<number>(() => current.size)
   const [auto, setAuto] = React.useState(() => ({ ms: autoRefreshMs, enabled: autoEnabled }))
   const [providerOptions, setProviderOptions] = React.useState<ProviderOption[]>([])
   const [modelOptions, setModelOptions] = React.useState<string[]>([])
@@ -996,7 +1022,7 @@ function RequestsPage() {
         error: '',
       }
       // 明细被清空或被保留期裁掉后，停在第 5 页会看到一片空白：先把 offset 夹回最后一页
-      const lastOffset = Math.max(0, (Math.ceil(next.matched / PAGE_SIZE) - 1) * PAGE_SIZE)
+      const lastOffset = Math.max(0, (Math.ceil(next.matched / current.size) - 1) * current.size)
       if (current.offset > lastOffset) {
         applyOffset(lastOffset)
         return loadPanel({ silent })
@@ -1107,12 +1133,30 @@ function RequestsPage() {
 
   /** 翻页要真打接口（offset 是后端口径），到边界直接不发请求 */
   function gotoPage(target: number): void {
-    const pageCount = Math.max(1, Math.ceil(data.matched / PAGE_SIZE))
+    const pageCount = Math.max(1, Math.ceil(data.matched / current.size))
     const next = Math.min(Math.max(1, target), pageCount)
-    const nextOffset = (next - 1) * PAGE_SIZE
+    const nextOffset = (next - 1) * current.size
     if (nextOffset === current.offset) return
     applyOffset(nextOffset)
     pendingScrollRef.current = 0   // 新一页从顶部开始读
+    void loadPanel()
+  }
+
+  /**
+   * 换每页条数：先落盘再按**当前第一条**换算页码，避免「换档之后看到别的数据」——
+   * 比如停在第 3 页（每页 50，即第 101 条）改成每页 100，应该落在第 2 页的第 101 条
+   * 上，而不是回到第一页。换算后的 offset 一般不是新档位的整数倍，页脚读数按
+   * 「当前第 a–b 条」显示，页码由 offset 反推（与旧实现同一口径）。
+   */
+  function onPageSizeChange(choice: PageSizeChoice): void {
+    const next = numericSize(choice)
+    if (next === current.size) return
+    current.size = next
+    setPageSize(next)
+    writePageSize('requests', next)
+    const first = current.offset + 1
+    applyOffset(Math.max(0, Math.floor((first - 1) / next) * next))
+    pendingScrollRef.current = 0
     void loadPanel()
   }
 
@@ -1148,8 +1192,12 @@ function RequestsPage() {
   /* ─── 渲染 ─────────────────────────────── */
 
   const columns = visibleColumns()
-  const pageCount = Math.max(1, Math.ceil(data.matched / PAGE_SIZE))
-  const currentPage = Math.min(pageCount, Math.floor(offset / PAGE_SIZE) + 1)
+  const pageCount = Math.max(1, Math.ceil(data.matched / current.size))
+  const currentPage = Math.min(pageCount, Math.floor(offset / current.size) + 1)
+  /** 本页显示的区间（1 起闭区间）：给页脚的「当前第 a–b 条」用。
+      名字带 page 前缀：`rangeStart` 已被上面的时间档位函数占用（模块级） */
+  const pageRangeStart = data.matched ? offset + 1 : 0
+  const pageRangeEnd = data.matched ? offset + data.entries.length : 0
   const badgeText = data.error
     ? '—'
     : data.matched === data.total ? `${data.total} 条` : `${data.matched} / ${data.total} 条`
@@ -1275,16 +1323,21 @@ function RequestsPage() {
         </div>
       </div>
 
-      <div className='panel-foot'>
-        <span>上报的是网关报文里的模型名，别名 / 映射后的名字按上游收到的那次记录</span>
-        <span>账号为空表示请求在选定账号之前就失败了</span>
-        <div className='spacer' />
-        {/* 分页器交给组件库的 Pager：两颗按钮的边界判断（首页不能退、末页不能进）与「第 N / M 页」
-            读数都在它里面，读数用等宽数字。className 保留 .log-pager —— 底栏的间距与「窄窗口整组
-            换行」由 page-logs.css 那条规则分配。旧的三颗 id（btn-req-prev / btn-req-next /
-            req-page-info）随组件一起去掉，全仓 grep 过：没有别处查询它们 */}
-        <Pager page={currentPage} pageCount={pageCount} onPageChange={gotoPage} className='log-pager' />
-      </div>
+      {/* 页脚分页栏交给通用表格外壳（table-shell.tsx）：读数 / 每页条数 / 跳页 /
+          翻页器四件事五张表同一套。这里走的是**服务端真分页** —— 翻页与换档位都
+          真打接口（offset/limit 由后端执行），所以不给「全部」那一档；组件本身不
+          管页码，只管渲染 */}
+      <TableFooter
+        total={data.matched}
+        range={{ start: pageRangeStart, end: pageRangeEnd }}
+        page={currentPage}
+        pageCount={pageCount}
+        size={pageSize}
+        sizes={PAGE_SIZES}
+        onSizeChange={onPageSizeChange}
+        onPageChange={gotoPage}
+        disabled={!data.loaded && !data.error}
+      />
     </section>
   )
 }

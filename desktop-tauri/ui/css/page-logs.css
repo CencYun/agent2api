@@ -1,7 +1,9 @@
 /* ─────────────────────────────────────────────
    日志页：系统事件时间线
    （网关转发明细已拆到「请求日志」页，表格样式在 page-requests.css；
-   本文件的 .log-filters / .log-list / .log-pager 等容器声明两页共用。）
+   本文件的 .log-filters / .log-list 等容器声明两页共用。分页栏已并入
+   通用表格页脚 —— 见 islands/table-shell.tsx 与 layout.css 的 .table-foot-ctl，
+   原先的 .log-pager 一族随组件化的 Pager 一起退场。）
    颜色一律取 tokens.css 的语义变量，浅色深色共用同一组声明。
    ───────────────────────────────────────────── */
 

@@ -50,6 +50,24 @@ pub const KEY_REQUEST_STATS_DIR: &str = "requestStatsDir";
 /// 调试模式原始报文的保存目录（config.json 键），语义同 `KEY_LOG_DIR`
 pub const KEY_DEBUG_DIR: &str = "debugDir";
 
+/// 「软件更新」的出网线路（config.json 键，**缺省 = 直连**）。
+///
+/// 值是归一后的代理配置对象（与账号代理同一形状：`{source:'clash',
+/// listenerUid}` / `{source:'custom',…}`），null / 缺省都表示直连。
+/// 检查更新与下载安装包共用它（`core::update::client` 的出口候选），
+/// 定时检查任务同一条路 —— 所以改完不用重启，下一次检查就生效。
+/// 归一与解析都复用账号代理那两份实现（`normalize_account_proxy` /
+/// `resolve_account_proxy`），这里只存取。
+pub const KEY_UPDATE_PROXY: &str = "updateProxy";
+
+/// GitHub 令牌的密文信封（config.json 键，**存的不是明文**）。
+///
+/// 值是 `core::update::token` 用 AES-256-GCM 加密出来的 `enc1:<base64>` 信封，
+/// 明文只进内存、只在拼请求头时用；密钥在库外的密钥文件里（细节见那个
+/// 模块的头注释）。API 只报「有没有、来自哪」，不回显本体。
+/// 环境变量 `GITHUB_TOKEN` 仍是兜底来源（优先级：这个键 > 环境变量）。
+pub const KEY_GITHUB_TOKEN: &str = "githubToken";
+
 /// 调试模式开关（config.json 键）。
 ///
 /// 开启后转发层会把**发给上游的请求头（脱敏）与请求体、上游返回的响应头与

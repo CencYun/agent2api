@@ -67,6 +67,20 @@
   transition: background .15s ease, color .15s ease;
 }
 
+/* 分类图标槽：尺寸/取色与主侧栏的 .nav-item .ico 一致（17px 盒、currentColor，
+   选中态自动变主题色；svg 撑满盒子）。间距用 margin 而不是 gap —— 老浏览器之外
+   没差别，但这里与 .nav-item 的写法保持一致，两处对照着读更容易。 */
+.settings-nav-item .ico {
+  flex: 0 0 auto;
+  width: 17px;
+  height: 17px;
+  display: grid;
+  place-items: center;
+  margin-right: 7px;
+}
+
+.settings-nav-item .ico svg { display: block; }
+
 /* hover：一层极淡的中性叠加底（与主侧栏同款表达式，浅色叠灰、深色叠白）。
    带 :not(:disabled) 是为了压过 components.css 里通用的 button:hover ——
    那个选择器特异性更高，否则会盖掉叠加底并给导航项描边。 */
@@ -101,7 +115,7 @@
 .settings-pane.active { display: block; }
 
 /* 窄窗口（与主侧栏收起的断点一致）：两栏退化为「导航在上、内容在下」，
-   导航转横排铺满整行。窗口最小 720px，四个分类横排放得下。 */
+   导航转横排铺满整行；装不下时导航自己横向滚（下面 nav 的 overflow-x）。 */
 @media (max-width: 900px) {
   .settings-layout { flex-direction: column; gap: 12px; }
 

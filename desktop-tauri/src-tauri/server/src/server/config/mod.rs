@@ -142,6 +142,18 @@ pub struct RuntimeConfig {
     /// 于是转发热路径上一次磁盘 IO 都没有；文件读不到时这里已经是「内置默认 +
     /// 一条原因」的形态，转发层不必再处理失败路径。
     prompt: PromptSettings,
+    /// 「软件更新」的出网线路（`updateProxy`：None = 直连，默认）。
+    ///
+    /// 存的是归一后的配置对象（与账号代理同一形状），解析交给
+    /// `core::proxies::resolve_account_proxy`（同一条路）。低频字段（每次
+    /// 检查 / 下载发起时读一次），不值得为它发明解析层，存原始值即可。
+    update_proxy: Option<Value>,
+    /// GitHub 令牌的**密文信封**（`githubToken`：None = 未在界面保存）。
+    ///
+    /// 注意这里从配置里读出来的就已经是 `enc1:` 信封，**明文永远不进
+    /// config 快照**（加解密都在 `core::update::token` 里），环境变量
+    /// 兜底也不在这里管。与 update_proxy 同为低频字段，存原始字符串即可。
+    github_token: Option<String>,
     /// 磁盘上那份 JSON 对象（含未知字段），写盘时的全量底稿
     raw: Map<String, Value>,
 }
@@ -403,6 +415,14 @@ fn build(raw: Map<String, Value>) -> RuntimeConfig {
         // 系统提示词：模式非法/缺失 → passthrough（默认），文件读不到 → 内置默认
         // + 一条原因（见 `prompt_from`）
         prompt: prompt_from(&raw),
+        // 更新出网线路：null / 缺省都不进字段（None = 直连）
+        update_proxy: raw
+            .get(KEY_UPDATE_PROXY)
+            .filter(|value| !value.is_null())
+            .cloned(),
+        // GitHub 令牌信封：空串按未设置处理（手改库写出的空值不该被当成密文）
+        github_token: string_field(&raw, KEY_GITHUB_TOKEN)
+            .filter(|envelope| !envelope.is_empty()),
         raw,
     }
 }
@@ -984,6 +1004,80 @@ pub fn set_captcha_enabled(enabled: bool) -> bool {
             .raw
             .insert(KEY_CAPTCHA_ENABLED.to_string(), Value::Bool(enabled));
         config.captcha_enabled = enabled;
+    })
+}
+
+// ─── 更新出网线路（updateProxy）─────────────────────────────
+
+/// 只取「软件更新」出网线路的轻量读取（**不克隆整份 raw**）。
+///
+/// 检查与下载各只在**发起时**读一次（低频），但同样不必为它克隆整份
+/// `raw` Map —— 读锁取那一个字段即可。未初始化时给 None（直连）。
+pub fn update_proxy() -> Option<Value> {
+    if let Ok(guard) = CONFIG.read() {
+        if let Some(config) = guard.as_ref() {
+            return config.update_proxy.clone();
+        }
+    }
+    None
+}
+
+/// 写入「软件更新」的出网线路（None = 直连）。
+///
+/// 值由调用方先归一（`api::update` 走 `normalize_account_proxy`），这里不做
+/// 二次校验 —— 解析失败（出口后来被删 / 被禁）由读取方兜底（回退默认出口，
+/// 见 `core::update::client`），与账号转发「代理不可用回退直连」同一取向。
+/// 与 `set_sanitize_fingerprints` 同一模式：内存立即生效（下一次检查 / 下载
+/// 就用新线路，含定时任务，不必重启进程），写盘时不吃掉其它字段。
+pub fn set_update_proxy(proxy: Option<Value>) -> bool {
+    update(move |config| {
+        match proxy.clone() {
+            Some(value) => {
+                config.raw.insert(KEY_UPDATE_PROXY.to_string(), value);
+                config.update_proxy = proxy.clone();
+            }
+            None => {
+                // 直连**删掉键**而不是写 null：与 set_api_key(None) 同一语义，
+                // 配置里不留没意义的空值（读侧也按缺省 = 直连处理）
+                config.raw.remove(KEY_UPDATE_PROXY);
+                config.update_proxy = None;
+            }
+        }
+    })
+}
+
+// ─── GitHub 令牌信封（githubToken）────────────────────────
+
+/// 只取 GitHub 令牌密文信封的轻量读取（**不克隆整份 raw**）。
+///
+/// 加解密都在 `core::update::token`（这里只存取信封，理由见字段说明）。
+/// 未初始化时给 None（未在界面保存）。
+pub fn github_token_envelope() -> Option<String> {
+    if let Ok(guard) = CONFIG.read() {
+        if let Some(config) = guard.as_ref() {
+            return config.github_token.clone();
+        }
+    }
+    None
+}
+
+/// 写入 GitHub 令牌的密文信封（None = 清除，连键一起删）。
+///
+/// **只收信封不收明文**：调用方（`core::update::token::set_token`）负责加密
+/// 与校验。与 `set_update_proxy` 同一模式：内存立即生效（下一次检查更新就用
+/// 新令牌），写盘时不吃掉其它字段。
+pub fn set_github_token_envelope(envelope: Option<String>) -> bool {
+    update(move |config| {
+        match envelope.clone() {
+            Some(value) => {
+                config.raw.insert(KEY_GITHUB_TOKEN.to_string(), Value::String(value));
+                config.github_token = envelope.clone();
+            }
+            None => {
+                config.raw.remove(KEY_GITHUB_TOKEN);
+                config.github_token = None;
+            }
+        }
     })
 }
 

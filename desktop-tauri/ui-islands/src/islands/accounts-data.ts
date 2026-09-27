@@ -13,7 +13,9 @@
  *
  * ── 对外契约（调用点逐个 grep 确认过）──────────────────────────
  *   · `wbAccountsView`  app.js:147 syncConnections / :575 render / :622 refreshCaches /
- *                       :811 与 tasks-panel.tsx:559 syncBalancesSnapshot / providers.js:138 render
+ *                       :811 与 tasks-panel.tsx 的 syncBalancesSnapshot / providers.js:138 render；
+ *                       tasks-panel.tsx 的「立即签到一次」还调 refreshUsageAfterCheckin
+ *                       —— 那条路径的签到不在账号页里，但积分同样会变，余额得跟着刷
  *   · `wbAccountsModel` app.js:178 isRateLimited / :663 isDesktopAccount / report.js:307
  *                       editionSuffix / models-fetch-modal.tsx:245 providerFeatures、:255 byPriorityOrder
  *   · `wbAccountPanel`  app.js:623 invalidate / :645 open
@@ -380,7 +382,8 @@ export async function queryAllUsage(): Promise<void> {
  * **不看启用状态**）。
  *
  * 只发请求、不动任何界面缓存：结果的呈现由调用方决定（行上按钮的状态 + toast，
- * 见 `runCheckin` / `checkinAll`）—— 签到**没有明细面板**，别在这里挂面板状态。
+ * 以及顺带一次余额刷新，见 `runCheckin` / `checkinAll`）—— 签到**没有明细面板**，
+ * 别在这里挂面板状态。
  */
 export async function checkinFor(id?: string | null): Promise<{
   results?: Array<Record<string, unknown>>
@@ -411,7 +414,10 @@ function checkinOutcomeOf(row: Record<string, unknown> | undefined): CheckinOutc
   return { kind: 'failed', reason: String(claim.msg || '未领取') }
 }
 
-/** 批量签到（工具条「全部签到」）。结果只走 toast —— 没有明细面板可展开。 */
+/**
+ * 批量签到（工具条「全部签到」）。结果只走 toast —— 没有明细面板可展开。
+ * 签到完还会静默刷新一次余额：签到发的积分 / 权益本来就要落到余额列上。
+ */
 export async function checkinAll(): Promise<void> {
   if (getStore().checkinBusy) return
   const targets = checkinableAccounts(allAccounts())
@@ -454,6 +460,9 @@ export async function checkinAll(): Promise<void> {
     const skipped = Number(data?.skipped) || 0
     toast(`签到完成：${parts.join('，')}`
       + (skipped ? `；跳过 ${skipped} 个国际版 / 所属家无签到的账号` : ''), failed.length ? 'err' : 'ok')
+    // 签到会改变余额读数（签到发的就是积分 / 权益）：静默再查一遍，余额列直接落到
+    // 新读数（不 await、不播报，理由见 refreshUsageAfterCheckin）
+    void refreshUsageAfterCheckin()
   } catch (error) {
     const message = errorMessage(error)
     targets.forEach(account => checkinErrors.set(account.id, message))
@@ -474,6 +483,9 @@ export async function checkinAll(): Promise<void> {
  *   - 成功 → toast ✅，按钮随即变成「已签到」；
  *   - 今日已领取 → 中性 toast（正常状态，不是故障），按钮同样变「已签到」；
  *   - 未领取 → toast 原因 + 把它记进按钮 title（toast 会消失，原因要能复看）。
+ *
+ * 请求正常返回（三种结局都算）后顺带**静默查一次该账号的余额** —— 签到会改变余额
+ * 读数，见 `refreshUsageAfterCheckin`。请求本身抛错时不查：那时后端多半不可达。
  */
 export async function runCheckin(id: string): Promise<void> {
   const label = displayNameOf(findAccount(id)) || id
@@ -490,6 +502,9 @@ export async function runCheckin(id: string): Promise<void> {
       toast(outcome.kind === 'already' ? `${label}：今日已领取` : `✅ ${label} 签到成功`, 'ok')
     }
     bump()
+    // 签到会改变余额读数：此刻刷新余额（静默，见 refreshUsageAfterCheckin）。
+    // 只查这一行 —— 用户点的是这个账号，别的行没动过
+    void refreshUsageAfterCheckin(id)
     void shared().wbApp?.refresh?.()
   } catch (error) {
     const message = errorMessage(error)
@@ -499,8 +514,13 @@ export async function runCheckin(id: string): Promise<void> {
   }
 }
 
-/** 行上「余额」按钮：在途去重（同一账号同时发几份一模一样的上游请求，界面上看不出区别） */
-export async function queryUsageOnce(id: string): Promise<void> {
+/**
+ * 查询一个账号余额的执行体：在途去重 + 「查询中」中间态。异常**照原样抛给调用方**
+ * —— 失败怎么落缓存、要不要播报由调用方定，两个调用点的口径不同：
+ *   · 行上「余额」按钮（`queryUsageOnce`）→ 失败落进余额列 + 红色 toast；
+ *   · 签到后的自动刷新（`refreshUsageAfterCheckin`）→ 只落缓存，不播报。
+ */
+async function runUsageQuery(id: string): Promise<void> {
   if (getStore().usageInflight.has(id)) return
   const inflight = new Set(getStore().usageInflight)
   inflight.add(id)
@@ -508,6 +528,18 @@ export async function queryUsageOnce(id: string): Promise<void> {
   patch({ usageInflight: inflight })
   try {
     await queryUsageFor(id)
+  } finally {
+    const next = new Set(getStore().usageInflight)
+    next.delete(id)
+    patch({ usageInflight: next })
+  }
+}
+
+/** 行上「余额」按钮：在途去重（同一账号同时发几份一模一样的上游请求，界面上看不出区别） */
+export async function queryUsageOnce(id: string): Promise<void> {
+  if (getStore().usageInflight.has(id)) return
+  try {
+    await runUsageQuery(id)
     // 缓存的四种形态（见 usageFailureOf）：undefined/null/字符串/对象，对象里再分
     // 「未配置」与「失败」—— 提示语要跟着这个分叉走
     const failure = usageFailureOf(usageMap.get(id))
@@ -518,10 +550,54 @@ export async function queryUsageOnce(id: string): Promise<void> {
     usageMap.set(id, `查询失败：${errorMessage(error)}`)
     bump()
     toast(`余额查询失败：${errorMessage(error)}`, 'err')
+  }
+}
+
+/**
+ * 签到后的余额刷新：**签到会改变余额读数**（小浣熊与 AutoClaw 的签到直接发积分、
+ * Qoder 的签到发权益），而余额列读的是缓存里的旧读数 —— 不刷新的话，用户要再点一次
+ * 「余额」才看得到刚领到的那笔。所以签到一结束就把读数重新拉一遍。
+ *
+ * ── 为什么静默（不 toast、也不复用 queryUsageOnce / queryAllUsage 的播报）──
+ * toast 是单例，后一条会把前一条**顶掉**：签到结果才是用户刚点那个动作的结果，
+ * 不能被一条「已更新余额」挤掉。反馈改由界面自己给 —— 余额列先显示「查询中」、
+ * 再落到新读数；批量那条同时把工具条的「查询中…」点亮（`usageBusy`，顺带挡住
+ * 用户在刷新期间重复点「查询余额」）。
+ *
+ * 目标集合：`id` 给定 = 该账号（后端单查路径不看 `enabled`，与行上那颗「余额」
+ * 按钮同一条）；缺省 = 与工具条「查询余额」逐字相同的集合（有余额概念 + 启用），
+ * 免得自动刷新比手动查询还「多查一批」。没有余额概念的账号直接跳过 ——
+ * 签到范围的几家都有余额概念，这一条是留给将来新增 provider 的兜底。
+ *
+ * 失败只写缓存（余额列显示失败原因）、不播报：签到请求成功而余额查询失败时，
+ * 用户需要的是「这行为什么没有读数」，而那条原因就在列上。
+ */
+export async function refreshUsageAfterCheckin(id?: string): Promise<void> {
+  if (id) {
+    const account = findAccount(id)
+    if (!account || !supportsUsage(account)) return
+    try {
+      await runUsageQuery(id)
+    } catch (error) {
+      usageMap.set(id, `查询失败：${errorMessage(error)}`)
+      bump()
+    }
+    return
+  }
+  if (getStore().usageBusy) return
+  const targets = allAccounts().filter(account => supportsUsage(account) && account.enabled !== false)
+  if (!targets.length) return
+  patch({ usageBusy: true })
+  targets.forEach(account => usageMap.set(account.id, null))
+  bump()
+  try {
+    await queryUsageFor(null)
+  } catch (error) {
+    const message = errorMessage(error)
+    targets.forEach(account => usageMap.set(account.id, `查询失败：${message}`))
+    bump()
   } finally {
-    const next = new Set(getStore().usageInflight)
-    next.delete(id)
-    patch({ usageInflight: next })
+    patch({ usageBusy: false })
   }
 }
 
@@ -674,6 +750,7 @@ export type AccountsViewApi = {
   queryAllUsage(): Promise<void>
   checkinFor(id?: string | null): Promise<unknown>
   checkinAll(): Promise<void>
+  refreshUsageAfterCheckin(id?: string | null): Promise<void>
   checkinableAccounts: typeof checkinableAccounts
   supportsCheckin: typeof supportsCheckin
   supportsUsage: typeof supportsUsage
@@ -788,6 +865,7 @@ export function installAccountsApi(): void {
     queryAllUsage,
     checkinFor,
     checkinAll,
+    refreshUsageAfterCheckin,
     checkinableAccounts,
     supportsCheckin,
     supportsUsage,

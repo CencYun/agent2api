@@ -334,6 +334,9 @@ pub fn panel_router(state: ServerState) -> Router {
         // 自定义模型（手动登记上游目录里没有的模型）
         .route("/api/models/custom", post(api::model_manage::add_custom))
         .route("/api/models/custom/remove", post(api::model_manage::remove_custom))
+        // 能力位覆盖（纠正对下游声明的那五个字段；只服务内置家，自定义家
+        // 走 /api/custom-providers/models 的整表保存，见该 handler 的说明）
+        .route("/api/models/capabilities", post(api::model_manage::set_capabilities))
         // ── 自定义提供商（用户自建上游端点：存储 + 管理）──
         // 与 /api/models/manage 同级敏感：写配置（customProviders 键）且「新建」
         // 会顺带写账号库，挂 protected。账号侧不经这里 —— 客户端走

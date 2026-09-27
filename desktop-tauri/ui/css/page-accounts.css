@@ -102,18 +102,7 @@
 }
 
 /* ─── 页脚 ───
-   与批量栏同一处理：同底色 + 一条 --hairline 分隔线，不再自成一条灰带。 */
-.table-foot {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 16px;
-  border-top: 1px solid var(--hairline);
-  background: var(--surface);
-  color: var(--text-3);
-  font-size: 11px;
-  flex-wrap: wrap;
-}
-
-.table-foot .spacer { flex: 1 1 auto; }
+   账号页的页脚现在也用通用表格页脚（islands/table-shell.tsx 的 TableFooter →
+   .panel-foot + .table-foot-ctl 一族，见 layout.css）：原先那一套 .table-foot
+   专属样式（同底色 + 一条 --hairline 分隔线）随「五张表页脚一致」一并去掉。 */
 

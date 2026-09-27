@@ -388,9 +388,9 @@ input[type="number"] { max-width: 130px; }
    按住时变主色加粗。
    靠绝对定位挂在宿主单元格上，所以宿主必须是定位元素 —— 三张 table 表的
    表头是 position: sticky（本来就是），请求日志的表头格也单独声明了 relative。
-   right: -4px 让竖线正好压住列边界；代价是最后一列不能插把手（钉在表格右缘
-   会顶出滚动容器），这一条由各自的脚本负责（请求日志是网格布局、整行填满
-   不滚动，末列照插）。
+   right: -4px 让竖线正好压住列边界；钉在表格最右缘会凭空多出 4px 横向溢出，
+   所以**末列改用 .col-grip-end**（right: 0，往里挪 4px）—— 四张表的末列现在
+   都能拖，只是最后那枚把手贴在列内侧（见 table-columns.js 模块头）。
 
    竖线不随宿主撑满、改定高 20px 垂直居中：四张表的宿主高度参差 —— 账号表
    th 行高 32px（眼睛按钮撑起行盒），32 − 上下各 6px 恰是 20px；模型/网关
@@ -418,6 +418,9 @@ input[type="number"] { max-width: 130px; }
 }
 
 .col-grip.active::after { left: 3.5px; width: 2px; background: var(--primary); }
+
+/* 末列的把手：整枚往左挪 4px，竖线正好落在列右缘内侧（表格边缘不再多出 4px 溢出） */
+.col-grip-end { right: 0; }
 
 /* 拖动中：全局换光标并禁用选中（拖过文本会触发原生的拖选，把手就「断」了） */
 body.col-resizing { cursor: col-resize; user-select: none; }

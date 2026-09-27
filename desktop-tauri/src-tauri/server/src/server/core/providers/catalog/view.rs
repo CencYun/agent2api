@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use serde_json::{json, Map, Value};
 
 use crate::server::core::account_store::AccountStore;
+use crate::server::core::capability;
 use crate::server::core::key_scope::{self, KeyScope};
 use crate::server::core::model_rules;
 use crate::server::core::models::{list_item, list_response_from, model_id, suggest_from};
@@ -114,6 +115,15 @@ pub fn models_by_provider(store: &AccountStore) -> Value {
 
 /// 每条原始 ID 都返回一个默认绑定；历史的同名映射合并进默认绑定，避免两个开关
 /// 控制同一个请求名。默认绑定不可删除，关闭不影响这一行的其他别名。
+///
+/// ── 能力位（`capabilities` / `capOverrides`）─────────────────
+/// 每行带两个能力字段（管理页的「上下文 / 输出」与「能力」两列读它们）：
+///   · `capabilities`：**生效值**（清单原值 + 用户覆盖，五项齐全，
+///     `null` = 未声明 —— 与「不支持 / 0」区分开，用户编辑时要靠它分辨
+///     「不知道」与「明确不支持」）；
+///   · `capOverrides`：被用户覆盖的键（管理页据此给「已改」标记；
+///     空数组 = 全部继承清单原值）。
+/// 清单原值已由 `manifest_for` 应用过覆盖，所以这里读到的就是生效值。
 pub fn manage_view(store: &AccountStore) -> Value {
     let rules = model_rules::current();
     let mut models = Vec::new();
@@ -155,11 +165,21 @@ pub fn manage_view(store: &AccountStore) -> Value {
             let source = if rules.custom.iter().any(|custom| custom.matches(provider, &id)) {
                 "manual"
             } else { source };
+            // 覆盖键列表从**本次快照**里查（不调 model_rules::current() —— 那会
+            // 每行重新解析一遍配置，几百行的清单就是几百次解析）
+            let cap_overrides: Vec<String> = rules
+                .capabilities
+                .iter()
+                .find(|entry| entry.matches(provider, &id))
+                .map(|entry| capability::overridden_keys(&entry.values))
+                .unwrap_or_default();
             models.push(json!({
                 "id": id, "name": item.get("name"), "credits": item.get("credits"),
                 "isDefault": item.get("isDefault").and_then(Value::as_bool).unwrap_or(false),
                 "provider": provider, "providerLabel": super::super::label_of(provider),
                 "source": source, "enabled": enabled, "aliases": aliases,
+                "capabilities": capability::effective(&item),
+                "capOverrides": cap_overrides,
                 // 这一家的清单是什么时候拉到的（毫秒；0 = 从未成功拉过）。
                 // 缓存恢复的清单与刚拉的清单**都是 `remote`**，时效只能靠这个
                 // 时间戳说明（见 `providers::catalog_cache` 的模块头）。

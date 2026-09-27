@@ -6,10 +6,10 @@
  *
  *   1. **取数**：把该家记录（`models` / `mappings` 两个数组）适配成与
  *      `GET /api/models/manage` 同形的 `{models, mappings}` —— 于是表格渲染、搜索、
- *      映射 chip、思考等级、列设置全部照用，一行都不用为自定义家另写；
+ *      映射 chip、思考等级、能力位两列、列设置全部照用，一行都不用为自定义家另写；
  *   2. **写入**：该家没有逐条接口，只有「整表替换」（`POST /api/custom-providers/models`）。
  *      每次操作都「读当前记录 → 应用这一处改动 → 提交全量 → 刷新目录缓存」，于是界面上
- *      的每一步（开关 / 别名 / 思考等级 / 移除）都**立即生效**，没有保存按钮、没有草稿态；
+ *      的每一步（开关 / 别名 / 思考等级 / 能力位 / 移除）都**立即生效**，没有保存按钮、没有草稿态；
  *   3. **拉取**：`fetch-models` 由服务端代拉上游清单，新模型并入后同样走整表提交。
  *
  * ── 为什么在模型管理页里做适配，而不是把自定义家并进后端 manage_view ──
@@ -28,6 +28,8 @@
  * 刷新，本模块不自己发 GET，只在写入成功后 `refreshCustom()` 一次。
  */
 
+import { CAPABILITY_KEYS, normalizeCapabilities } from './model-capability'
+
 /* ─── 对外数据类型（表格同形数据，models-page.tsx 也读这几个类型）────── */
 
 /** 一行模型（后端 `catalog::manage_view` 的 models[] 与本模块的适配结果同形） */
@@ -43,6 +45,15 @@ export type ManageModel = {
   /** 家级字段：这家清单的最近拉取时刻（毫秒，0 = 未知）；自定义家没有 */
   refreshedAt?: unknown
   credits?: unknown
+  /**
+   * 对下游声明的能力位（生效值：清单原值 + 用户覆盖）。内置家由后端给
+   * 「五键齐全、null = 未声明」的形状；自定义家由本模块适配成**稀疏表**
+   * （没填的键不出现）—— 读侧统一走 `model-capability` 的归一/判定，
+   * 两种形状不会分叉。
+   */
+  capabilities?: unknown
+  /** 被用户覆盖过的能力键（只有内置家给；自定义家的一切都是用户填的，恒空） */
+  capOverrides?: unknown
 }
 
 /** 一条映射（含表格现造的默认绑定：alias == target） */
@@ -70,7 +81,8 @@ export type CustomProviderRecord = {
   id?: string
   name?: string
   createdAt?: unknown
-  models?: Array<{ id?: unknown; enabled?: unknown; reasoning?: unknown }>
+  /** `capabilities` 是该条模型的能力位覆盖（可选稀疏表，键名见 `model-capability`） */
+  models?: Array<{ id?: unknown; enabled?: unknown; reasoning?: unknown; capabilities?: unknown }>
   mappings?: Array<{ alias?: unknown; target?: unknown; enabled?: unknown; reasoning?: unknown }>
 }
 
@@ -130,13 +142,36 @@ export function record(id: string): CustomProviderRecord | null {
  * 每次提交都从**目录缓存的当前值**重建，所以本函数是幂等的：连点两次开关，第二次读到
  * 的就是第一次提交后的值。
  */
-function draftOf(provider: CustomProviderRecord | null): { models: Array<{ id: string; enabled: boolean; reasoning: string }>; mappings: Array<{ alias: string; target: string; enabled: boolean; reasoning: string }> } {
+type DraftModel = { id: string; enabled: boolean; reasoning: string; capabilities?: Record<string, number | boolean> }
+type DraftMapping = { alias: string; target: string; enabled: boolean; reasoning: string }
+
+/**
+ * 记录条目的能力位 → 可提交的稀疏对象（空表给 `undefined`：整表提交里不带
+ * 这个键，与后端「空表不落键」的口径一致）。
+ */
+function sparseCapabilities(value: unknown): Record<string, number | boolean> | undefined {
+  const normalized = normalizeCapabilities(value)
+  const result: Record<string, number | boolean> = {}
+  for (const key of CAPABILITY_KEYS) {
+    const item = normalized[key]
+    if (typeof item === 'number' || typeof item === 'boolean') result[key] = item
+  }
+  return Object.keys(result).length ? result : undefined
+}
+
+function draftOf(provider: CustomProviderRecord | null): { models: DraftModel[]; mappings: DraftMapping[] } {
   const models = (Array.isArray(provider?.models) ? provider.models : [])
-    .map(model => ({
-      id: String(model?.id ?? '').trim(),
-      enabled: model?.enabled !== false,
-      reasoning: typeof model?.reasoning === 'string' ? model.reasoning : '',
-    }))
+    .map(model => {
+      const draft: DraftModel = {
+        id: String(model?.id ?? '').trim(),
+        enabled: model?.enabled !== false,
+        reasoning: typeof model?.reasoning === 'string' ? model.reasoning : '',
+      }
+      // 能力位覆盖**必须原样带回**：整表替换的语义下，草稿漏了它，用户填过的
+      // 能力就会被一次「切开关」的提交顺手清掉
+      draft.capabilities = sparseCapabilities(model?.capabilities)
+      return draft
+    })
     .filter(model => model.id)
   const mappings = (Array.isArray(provider?.mappings) ? provider.mappings : [])
     .map(mapping => ({
@@ -162,9 +197,11 @@ function draftOf(provider: CustomProviderRecord | null): { models: Array<{ id: s
  * 目录记录 → 表格同形数据。返回 `null` = 这家已不存在（被别处删掉了）。
  *
  * 形状与后端 `catalog::manage_view` 逐字对齐，模型管理页的渲染只认这些字段：
- *   · models: `{id, name, provider, providerLabel, source, enabled, aliases}`
+ *   · models: `{id, name, provider, providerLabel, source, enabled, aliases,
+ *     capabilities, capOverrides}`
  *     —— 自定义家没有倍率与来源概念，`source` 留空串（选中自定义家时那两列本来就按
- *     视图隐藏，见 models-page 的 visibleColumns）；
+ *     视图隐藏，见 models-page 的 visibleColumns）；能力位是**记录自带**的稀疏表，
+ *     `capOverrides` 恒空（没有「上游原值」这回事，见 `setCapabilities`）；
  *   · mappings: `{alias, target, provider, enabled, reasoning, isDefault, dangling, carried}`
  *     —— 默认绑定（alias == target）由模型行现造，与内置家一致。
  */
@@ -184,6 +221,10 @@ export function buildView(id: string): { models: ManageModel[]; mappings: Manage
       source: '',
       enabled: model.enabled,
       aliases: [],
+      // 能力位是**记录自带的**（用户填的），没有「上游原值」这回事 ——
+      // 覆盖标记恒空，弹窗按「未声明 / 已填」两态呈现
+      capabilities: model.capabilities || {},
+      capOverrides: [],
     })
     mappings.push({
       alias: model.id,
@@ -320,6 +361,33 @@ export async function addModels(id: string, modelIds: readonly unknown[]): Promi
   })
 }
 
+/**
+ * 覆盖某条模型的能力位（自定义家的实现；内置家走 `writeCapabilities` 的
+ * `POST /api/models/capabilities`）。
+ *
+ * 自定义家的能力存在**提供商记录的 models[] 条目**里（与启停 / 思考等级同一处
+ * 存储），于是写入照那条既有路径：读当前记录 → 改这一条的字段 → 整表提交。
+ * `patch` 的三态与后端一致：键缺失 = 不改、`null` = 清除这一项、有值 = 覆盖；
+ * 清到一项不剩时整份 capabilities 键一并摘掉（与后端「空表不落键」同一口径）。
+ */
+export async function setCapabilities(
+  id: string,
+  modelId: string,
+  patch: Record<string, number | boolean | null>,
+): Promise<void> {
+  await submit(id, draft => {
+    const model = draft.models.find(item => same(item.id, modelId))
+    if (!model) throw new Error(`该提供商的清单里没有模型「${modelId}」`)
+    const next: Record<string, number | boolean> = { ...(model.capabilities || {}) }
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === null || value === undefined) delete next[key]
+      else next[key] = value
+    }
+    model.capabilities = Object.keys(next).length ? next : undefined
+    return null
+  })
+}
+
 /** 移除一个模型：连带删掉 target 指向它的映射，返回删了几条（用于 toast） */
 export async function removeModel(id: string, modelId: string): Promise<{ removedMappings: number }> {
   return submit(id, draft => {
@@ -366,6 +434,7 @@ export type CustomSourceApi = {
   addModel: typeof addModel
   addModels: typeof addModels
   removeModel: typeof removeModel
+  setCapabilities: typeof setCapabilities
   fetchModels: typeof fetchModels
 }
 
@@ -388,5 +457,6 @@ shared().wbModelsCustom = {
   addModel,
   addModels,
   removeModel,
+  setCapabilities,
   fetchModels,
 }

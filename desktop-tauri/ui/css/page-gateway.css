@@ -105,11 +105,15 @@
   font-size: 12.5px;
 }
 
+/* 单元格内边距统一 8px（上下左右同值）：列宽本来就紧（七列分 100%），
+   14px 会从每列吃掉 12px 的内容宽度。表头与表体用同一档，两者才对得齐；
+   列宽拖动（table-columns.js）的可用宽度从 computed style 现读 padding，
+   跟着这条生效，不需要另改。 */
 .models-table thead th {
   position: sticky;
   top: 0;
   z-index: 2;
-  padding: 8px 14px;
+  padding: 8px;
   border-bottom: 1px solid var(--border);
   background: var(--table-head-bg);
   color: var(--text-3);
@@ -120,17 +124,22 @@
   white-space: nowrap;
 }
 
-.models-table td { padding: 8px 14px; border-bottom: 1px solid var(--hairline); vertical-align: middle; }
+.models-table td { padding: 8px; border-bottom: 1px solid var(--hairline); vertical-align: middle; }
 .models-table tbody tr:last-child td { border-bottom: 0; }
 .models-table tbody tr:hover td { background: var(--row-hover); }
 .models-table th.r, .models-table td.r { text-align: right; }
-.models-table td.empty { padding: 26px 14px; text-align: center; color: var(--text-3); }
+.models-table td.empty { padding: 26px 8px; text-align: center; color: var(--text-3); }
 
 /* 列宽（合计 100%，table-layout: fixed 下按 colgroup 分配） */
-.models-table .c-model { width: 25%; }
-.models-table .c-rate { width: 7%; }
-.models-table .c-source { width: 8%; }
-.models-table .c-alias { width: 48%; }
+.models-table .c-model { width: 22%; }
+.models-table .c-rate { width: 6%; }
+.models-table .c-source { width: 7%; }
+/* 能力位两列：数值一格（上下文 / 最大输出）、三枚布尔徽章一格。
+   并入映射列的宽度从这里来 —— 五列会把它挤到装不下 chips（见 models-page
+   文件头的列数取舍） */
+.models-table .c-budget { width: 11%; }
+.models-table .c-caps { width: 13%; }
+.models-table .c-alias { width: 29%; }
 .models-table .c-act { width: 12%; }
 .keys-table .k-name { width: 22%; }
 .keys-table .k-key { width: 44%; }
@@ -145,7 +154,7 @@
 /* 提供商分组行：表内的一条分组带。取 --surface-2，只比表体差一档 ——
    它仍是「表里的一行」，不该用卡内凹槽那档深色（那会把表切成几块）。 */
 .models-table .tr-group td {
-  padding: 5px 14px;
+  padding: 5px 8px;
   background: var(--surface-2);
   color: var(--text-2);
   font-size: 11.5px;
@@ -161,27 +170,91 @@
   background: var(--surface);
   font-weight: 700;
 }
-.models-table .tr-more td { padding: 4px 14px; text-align: center; }
+.models-table .tr-more td { padding: 4px 8px; text-align: center; }
 
-/* 模型 id：等宽加粗，悬浮出复制按钮 */
+/* 模型 id：等宽加粗。名字本身就是复制入口（上游模型列与映射别名 chip 的
+   `.t` 都带 data-copy，点击走 clipboard.js 的全局委托）—— 曾经另挂一颗
+   悬浮才显形的 ⧉ 按钮（.mid .cp），已去掉：点名字更省事，也少一个控件。
+   可点样式只给带 data-copy 的名字：`.mid .t` 是模型管理 / 网关 Key 两页
+   共用的，Key 页的名字不可复制，别把指针样式串过去。 */
 .mid { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .mid .t { font-family: var(--font-mono); font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .keys-table .mid .t { font-family: var(--font-sans); }
-.mid .cp {
-  flex: 0 0 auto;
-  opacity: 0;
-  height: 20px;
-  padding: 0 4px;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-  color: var(--text-3);
-  font-size: 12px;
+.models-table .mid .t[data-copy],
+.models-table .alias .t[data-copy] { cursor: pointer; }
+.models-table .mid .t[data-copy]:hover,
+.models-table .alias .t[data-copy]:hover {
+  color: var(--text);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
 }
-.models-table tr:hover .mid .cp { opacity: 1; }
-.mid .cp:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
+/* 点击瞬间压淡一下：复制没有可见的落点（toast 之外），这一下是「点到了」的凭据 */
+.models-table .mid .t[data-copy]:active,
+.models-table .alias .t[data-copy]:active { opacity: .55; }
 .mname { color: var(--text-3); font-size: 11.5px; }
 .rate { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+
+/* ── 能力位两列（「上下文 / 输出」与「能力」）─────────────────────────
+   cell 内容是一个按钮：点开「模型能力」弹窗。两列的入口语义相同（能力是一个
+   整体，没必要各开一个弹窗），所以共用 .caps-open 外壳 —— 无样式按钮、hover
+   给一层浅底、focus 有圈（键盘可达）。数值与徽章的三态样式只定义在这里；
+   弹窗里用的是组件库控件，不复用这一套。
+
+   负外边距 4px：hover 底比内容外扩一圈，又不会顶到列边界上（td 左右 8px 的
+   内边距减掉 4px 外扩，还剩 4px 呼吸）。 */
+.caps-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  margin: -3px -4px;
+  padding: 3px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.caps-open:hover { background: var(--surface-2); }
+.caps-open:focus-visible { outline: 2px solid var(--primary); outline-offset: -1px; }
+
+/* 数值格：上下文 / 最大输出（等宽、按位数对齐，两行的两个数能上下比） */
+.cap-num {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+/* 未声明：压淡而不是换成文字 —— 与「明确声明了 0 / 不支持」一眼可分 */
+.cap-num.unset { color: var(--text-3); opacity: .6; }
+.cap-sep { color: var(--text-3); font-size: 11px; }
+
+/* 三枚布尔徽章：支持 = 品牌淡底实心；不支持 = 描边压淡；未声明 = 虚线。
+   窄窗口下列宽会被压小，允许换行 —— 不换行只会让第三枚压到映射列上 */
+.caps-open.caps-badges { gap: 4px; flex-wrap: wrap; }
+.cap-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  font-size: 10.5px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.cap-badge.on { border-color: var(--primary-bd); background: var(--primary-soft); color: var(--primary-fg); font-weight: 600; }
+.cap-badge.off { border-color: var(--border); color: var(--text-3); }
+.cap-badge.unset { border-style: dashed; border-color: var(--border-strong); color: var(--text-3); opacity: .8; }
+
+/* 覆盖标记：被用户改过的那一项挂一枚小点（title 说明「已覆盖上游值」） */
+.cap-mark { flex: 0 0 auto; display: block; width: 4px; height: 4px; border-radius: 50%; background: var(--primary); }
 
 /* 映射名药丸：品牌色浅底；行禁用时随行压淡并加删除线。
    纵向排列（每条绑定独占一行，参照账号页模型管理弹窗）——映射一多条，

@@ -20,6 +20,13 @@
 //! 与失败冷却约束 —— 连点按钮不该把匿名限额连点掉。两者撞在一起时，后到的
 //! 那一个等待在跑的那次结果（最多 75 秒），而不是并排再打一次。
 //!
+//! ── 换线路 / 换令牌会清掉失败冷却 ────────────────────────────
+//! 冷却的截止时刻来自上游（`Retry-After` / `X-RateLimit-Reset`），但它只对
+//! **产生它的那个配额桶**有意义（匿名按出口 IP 计、带令牌按用户计）。所以设置页
+//! 换出网线路或保存令牌之后，`api::update` 会调
+//! [`UpdateManager::clear_check_cooldown`] 把 `retry_at` 清掉，让用户立刻验证
+//! 新配置；排期不动，定时任务照旧（细节见该方法的说明）。
+//!
 //! ── 下载状态为什么仍留在内存 ─────────────────────────────────
 //! 下载任务（`Inner::task`）是「这一次进程正在写哪个文件」的观察值，跨重启
 //! 没有意义（半截文件在失败/取消时已被删除，见 `mod.rs` 的收尾约定）。
@@ -97,6 +104,20 @@ impl UpdateManager {
         match self.check_state() {
             Ok(state) => self.checked_result(CURRENT_VERSION, &state),
             Err(error) => json!({ "checked": false, "lastError": error }),
+        }
+    }
+
+    /// 清掉「检查更新」的失败冷却（`updateCheck:<repo>` 的 `retry_at`）。
+    ///
+    /// 调用点：换出网线路 / 换 GitHub 令牌成功之后（`api::update`）。冷却记的是
+    /// **某一个配额桶**的恢复时刻（匿名按出口 IP 计、带令牌按用户计），这两件事
+    /// 都会换桶 —— 不清的话用户换完线路 / 存完令牌还要对着「检查更新」按钮空等
+    /// 几十分钟（实测有过 1930 秒的残留冷却）。排期与最近尝试时间保持不动，
+    /// 定时任务照旧按自己的间隔跑。
+    pub fn clear_check_cooldown(&self) {
+        if let Err(error) = task_state::clear_cooldown(&self.check_key()) {
+            // 清不掉不是致命错误：冷却到点会自然失效，只记一行日志
+            logging::log("[Update]", &format!("⚠️ 清除检查失败冷却失败: {error}"));
         }
     }
 

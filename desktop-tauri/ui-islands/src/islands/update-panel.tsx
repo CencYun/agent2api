@@ -1,38 +1,35 @@
 import * as React from 'react'
 import { createRoot } from 'react-dom/client'
+import { Badge, Button, Progress } from '@ui'
 import {
-  Badge,
-  Button,
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  Progress,
-} from '@ui'
+  errorMessage, handleExternalClick, markdownHtml, safeExternal, shared, toast,
+  type DownloadTask, type UpdateInfo,
+} from './update-shared'
+import { showUpdateModal } from './update-modal'
+import { UpdateSettingsDialog } from './update-settings'
 
 /**
- * Agent2API · 设置页「软件更新」面板 + 「检测到更新」弹窗（React 岛）。
+ * Agent2API · 设置页「软件更新」面板（React 岛）。
  *
  * 替换 ui/update-panel.js。对外接口与原实现**完全一致**：
  *   `window.wbUpdatePanel = { load, check, syncFromCache, openAndDownload }`
  * 调用点一行都不用改：ui/settings-panel.js:177 → load()（切到设置页时）；
  * ui/app.js:845 → syncFromCache()（DOMContentLoaded，首屏用后端缓存回填）；
- * 「检测到更新」弹窗的「去更新」→ openAndDownload(info)（弹窗已归本文件）。
+ * 「检测到更新」弹窗的「去更新」→ openAndDownload(info)（弹窗已归 update-modal.tsx）。
  * 另多导出一个 showUpdateModal(info)：旧 app.js 的定时轮询（pollUpdateStatus）是「隔
  * 一会儿再弹一次」的唯一推手，它原来走 wbApp.updateUpdateBadge → app.js 的
- * maybeShowUpdateModal；静态弹窗 DOM 一删那条路就断了，所以判定逻辑搬进本文件。
+ * maybeShowUpdateModal；静态弹窗 DOM 一删那条路就断了，所以判定逻辑搬进了弹窗文件。
  *
- * ── 两块形态：常驻面板 + 按需弹窗（与 port-panel.tsx 同一套分工）─────
- * 第一块 `<div class="settings-pane" data-cat="about">` 是**常驻**的，模块加载时就把
- *   React root 建在**这个 div 本身**上（清掉原有静态子节点后），不套宿主：它的显隐由
- *   settings-panel.js 在它自己身上切 `.active`，子节点归本文件；中间插一层 wrapper 会
- *   让 `.panel` 的外边距与圆角裁切多出一层盒子，布局与接入前不等价。
- * 第二块弹窗是**按需**的：旧实现是 index.html 的 `#update-modal` 一族静态 DOM + app.js
- *   的开关函数；这里改成命令式外壳（照 port-panel）：需要时建宿主 div 挂 body、
- *   createRoot，关闭即 unmount + remove。**不读写 `#update-modal*` 任何 id**，结构走
- *   组件库 Dialog 一族（Esc / 点遮罩 / 焦点陷阱 / 滚动锁定全部内建）。
+ * ── 文件分工（这一族拆成四个，单文件不过长的同时不引入循环依赖）──
+ *   update-panel.tsx    常驻面板 + 命令式流程（本文件）：root 建在
+ *                       `<div class="settings-pane" data-cat="about">` **本身**上
+ *                       （清掉原有静态子节点后），不套宿主：显隐由 settings-panel.js
+ *                       在它自己身上切 `.active`；中间插一层 wrapper 会让 `.panel`
+ *                       的外边距与圆角裁切多出一层盒子，布局与接入前不等价。
+ *   update-modal.tsx    「检测到更新」弹窗：按需建的命令式外壳（照 port-panel），
+ *                       弹与不弹的判定也归它。
+ *   update-settings.tsx 「更新设置」弹窗（出网代理 + GitHub 令牌）。
+ *   update-shared.ts    三个 tsx 共用的类型、桥读取与工具（.ts 不被当岛挂载）。
  *
  * ── 两条贯穿全文件的约定（细节见各自函数）────────────────────
  * · 页面布局类名照旧、只换控件：`.panel` / `.panel-head` / `.panel-body` /
@@ -47,107 +44,17 @@ import {
  *   + !important，会压掉 tokens.css 里未分层的 `[hidden]{display:none!important}`
  *   （important 的层序反转），内联 style 同样被压。命令式流程（四个契约方法 + 1 秒下载
  *   轮询）改的是模块级快照，React 侧用 useSyncExternalStore 订阅（照 port-panel）。
- */
-
-/* ─── 类型 ─────────────────────────────────── */
-
-/** 更新检查结果（checkUpdate 的壳命令返回 / getUpdateStatus 的缓存）。字段按可选收：
- *  后端在「仓库暂无发布版本」「版本号无法解析」等情形下会给 null */
-type UpdateInfo = {
-  currentVersion?: string | null
-  latestVersion?: string | null
-  /** true / false / null（版本号无法比较时后端给 null，界面显示「无法比较」） */
-  hasUpdate?: boolean | null
-  /** 最新一版的发布说明（Markdown 原文，渲染交给 wbMarkdown） */
-  notes?: string | null
-  /** UTC 的 ISO 串 */
-  publishedAt?: string | null
-  /** GitHub 发布页（外链，交给 openReleasePage 打开） */
-  pageUrl?: string | null
-  prerelease?: boolean
-  /** 可下载资产；没有资产时「下载并安装」不给 */
-  asset?: { url?: string; name?: string } | null
-  /** owner/repo：作者主页与仓库地址由它现拼，代码里不写死账号 */
-  repository?: string
-  /** 'nsis'（Windows，要 UAC 提权）/ 'dmg'（macOS，挂载后手动拖） */
-  installerKind?: string
-  /** 检查时刻（后端给的；前端不用本地时钟冒充） */
-  checkedAt?: number
-  /** 仅 getUpdateStatus 有：后端定时任务还没查过时为 false */
-  checked?: boolean
-}
-
-/** 下载任务快照（downloadUpdate / updateProgress 的返回） */
-type DownloadTask = {
-  active?: boolean
-  done?: boolean
-  canceled?: boolean
-  error?: string | null
-  filename?: string
-  path?: string | null
-  received?: number
-  total?: number
-  percent?: number
-}
-
-/** 本岛用到的壳侧接口（见 bridge.rs 的「软件更新」一节） */
-type UpdateBridge = {
-  /** 壳命令：当前版本号只有壳知道，由壳带上去交给后端比较 */
-  checkUpdate(): Promise<UpdateInfo | null | undefined>
-  /** 后端缓存里的最近一次检查结果（定时任务写入） */
-  getUpdateStatus(): Promise<UpdateInfo | null | undefined>
-  downloadUpdate(payload: { url: string; name?: string }): Promise<DownloadTask | null | undefined>
-  updateProgress(): Promise<DownloadTask | null | undefined>
-  cancelUpdate(): Promise<{ canceled?: boolean } | null | undefined>
-  runInstaller(
-    path: string,
-    restart: boolean,
-  ): Promise<{ launched?: boolean; path?: string; restart?: boolean } | null | undefined>
-  /** 打开外链的唯一出口（只放行 http(s)，见 commands.rs） */
-  openReleasePage(url: string): Promise<{ url?: string } | null | undefined>
-}
-
-/**
- * window 上由其它脚本 / 其它岛挂载的共享桥。
  *
- * 刻意用「局部窄类型 + 转型」而不是 declare global 往 Window 上加属性：
- * workbuddyDesktop / wbApp / wbMarkdown 是多个岛共用的桥，各岛各 declare 一份会因同名
- * 属性类型不一致直接报 TS2717。本文件只声明自己独占的 wbUpdatePanel。
+ * ── 更新设置（「检查更新」左边那颗按钮）────────────────────
+ * 头部不放代理直上下拉了，收进「更新设置」弹窗（update-settings.tsx）：弹窗里
+ * 有出网代理与 GitHub 令牌两块设置，类型与读写函数在 update-shared.ts。本文件
+ * 只管按钮的开关状态（useState）与弹窗的条件渲染。
  */
-type SharedWindow = {
-  workbuddyDesktop?: UpdateBridge
-  wbApp?: {
-    toast?: (message: string, kind?: 'err' | 'ok') => void
-    /** 把「有新版本」翻译成「设置」导航项上的「新」提示（app.js 的出口） */
-    updateUpdateBadge?: (info: unknown) => void
-    /** 切页：弹窗「去更新」要跳到设置页（与旧 app.js 的实现同一条路） */
-    showPage?: (name: string, options?: { persist?: boolean }) => void
-    /** 当前页标识：人已经在设置页时不弹窗（照抄旧 app.js 的判定） */
-    readonly currentPage?: string
-  }
-  /** 设置页自己的分类切换（「去更新」要显式切到「关于」） */
-  wbSettingsPanel?: { showCategory?: (category: string) => void }
-  /** 更新日志的 Markdown 渲染（保持调用，不在这里重写它） */
-  wbMarkdown?: { render?: (text: string) => string }
-}
-
-function shared(): SharedWindow {
-  return window as unknown as SharedWindow
-}
 
 /* ─── 常量 ─────────────────────────────────── */
 
 /** 进度轮询间隔：下载 25MB 左右，1 秒足够顺滑又不会太密（照旧实现） */
 const POLL_MS = 1000
-
-/**
- * 「跳过此次更新」记在 localStorage 的键（值 = 跳过的版本号）。
- *
- * 键名与旧 app.js 的 UPDATE_SKIP_KEY 逐字一致，别改：同一个用户升级过程中跳过的版本
- * 不该因为换了实现又弹一遍。按**版本号**记 —— 跳过的那个版本不再弹，将来更新的版本
- * 照常弹（「取消」什么都不记，见会话守卫 promptedUpdateVersion）。
- */
-const UPDATE_SKIP_KEY = 'workbuddy-desktop-update-skip'
 
 /** 徽章语义色记号（app.js 的 renderTopbarStatus 优先读 data-tone，见其 mirror 注释） */
 type BadgeTone = '' | 'ok' | 'warn' | 'bad'
@@ -205,15 +112,8 @@ const INITIAL_SNAPSHOT: Snapshot = {
 }
 
 /* ─── 工具 ─────────────────────────────────── */
-
-/** 脚注 / toast 的统一出口（运行期读 wbApp，不在模块顶层解构） */
-function toast(message: string, kind?: 'err' | 'ok'): void {
-  shared().wbApp?.toast?.(message, kind)
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
+/* toast / errorMessage / markdownHtml / 外链（openExternal、handleExternalClick）
+ * 都在 update-shared.ts —— 两个弹窗也用，只此一份。 */
 
 /** 两位补零。与 logs-panel 的时间格式同一套写法（手工 pad + 本地时区），不用
  *  toLocaleString：它的输出随系统区域设置变，面板里的其它时间都是定宽格式 */
@@ -234,12 +134,6 @@ function formatClock(value: number): string {
   const date = new Date(value)
   if (!value || Number.isNaN(date.getTime())) return ''
   return `${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`
-}
-
-/** 外链白名单：只放行 http(s)（与后端 open_release_page 的口径一致，这里先挡一道） */
-function safeExternal(value: unknown): string {
-  const url = String(value || '').trim()
-  return /^https?:\/\//i.test(url) ? url : ''
 }
 
 /**
@@ -270,21 +164,6 @@ function readyHint(info: UpdateInfo | null, name: string): string {
 /** 安装按钮的文案：macOS 不重启（dmg 与运行中的进程没有文件冲突） */
 function installButtonText(info: UpdateInfo | null): string {
   return isMacInstaller(info) ? '打开安装包' : '安装并重启'
-}
-
-/** 更新日志正文：渲染交给 wbMarkdown（本文件不重写它），只做缺失兜底 */
-function markdownHtml(notes: string): string {
-  return shared().wbMarkdown?.render?.(notes) || ''
-}
-
-/** 读「跳过此次更新」的版本号（隐私模式等取不到就当作没跳过） */
-function readSkippedVersion(): string {
-  try { return localStorage.getItem(UPDATE_SKIP_KEY) || '' } catch { return '' }
-}
-
-/** 记「跳过此次更新」（写不进去只影响下次启动，不影响本次会话） */
-function writeSkippedVersion(version: string): void {
-  try { localStorage.setItem(UPDATE_SKIP_KEY, version) } catch { /* 忽略：下次照常弹 */ }
 }
 
 /* ─── 共享快照（外部 store）──────────────────── */
@@ -332,9 +211,6 @@ let autoInstalledPath: string | null = null
 
 /** 下载进度轮询定时器；null = 没在轮询 */
 let pollTimer: number | null = null
-
-/** 本会话内已弹过提示的版本号（「取消」不写 localStorage，靠它防同一版本连弹） */
-let promptedUpdateVersion = ''
 
 function stopPolling(): void {
   if (pollTimer !== null) {
@@ -496,63 +372,6 @@ async function install(path: string): Promise<void> {
   }
 }
 
-/* ─── 弹窗与外链 ─────────────────────────────── */
-
-/**
- * 弹与不弹的判定（从旧 app.js 的 maybeShowUpdateModal 原样搬来）：
- *   · 只有确实有新版本、且最新版本号非空才弹；
- *   · 「跳过此次更新」记的是**版本号**：该版本不再弹，将来更新的版本照常弹；
- *   · 「取消」什么都不记，但本会话内同一版本也不再弹（promptedUpdateVersion）——
- *     后端的定时检查到点会再次发现它，没有这道闸就会隔一分钟弹一次；
- *   · 人已经在设置页时不弹 —— 软件更新面板就在眼前，再盖一层弹窗纯属打扰。
- *
- * 调用点与旧实现一致：check / syncFromCache / openAndDownload 结束时各一次（check 那条
- * 实际上永远被「人已在设置页」挡住，留着是为了与旧路径一一对应），另外作为契约方法供
- * app.js 的定时轮询转发。
- */
-function showUpdateModal(info: UpdateInfo | null | undefined): void {
-  if (!info || info.hasUpdate !== true) return
-  const latest = String(info.latestVersion || '').trim()
-  if (!latest) return
-  if (shared().wbApp?.currentPage === 'settings') return
-  if (latest === readSkippedVersion() || latest === promptedUpdateVersion) return
-  promptedUpdateVersion = latest
-
-  unmountUpdateModal()
-  modalHost = document.createElement('div')
-  document.body.append(modalHost)
-  modalRoot = createRoot(modalHost)
-  modalRoot.render(<UpdateModal info={info} onClose={unmountUpdateModal} />)
-}
-
-/** 打开外链：一律交给系统浏览器。webview 里直接导航会白屏，而且本程序持有桥接权限，
- *  外部链接不该在应用内部打开 */
-async function openExternal(url: string): Promise<void> {
-  const target = safeExternal(url)
-  if (!target) {
-    toast('链接地址不受支持', 'err')
-    return
-  }
-  try {
-    await shared().workbuddyDesktop?.openReleasePage(target)
-  } catch (error) {
-    toast(`打开链接失败：${errorMessage(error)}`, 'err')
-  }
-}
-
-/**
- * 事件委托：更新日志与 Markdown 正文里的外链是动态渲染出来的，逐个绑定既费事又容易漏。
- * 挂在面板根节点上（React 合成事件会冒泡到这里），弹窗正文里也挂一份 —— 旧实现只管
- * 面板那一份，弹窗里的链接会直接让 webview 导航（白屏），这里补上。
- */
-function handleExternalClick(event: React.MouseEvent<HTMLElement>): void {
-  const target = event.target as HTMLElement | null
-  const trigger = target?.closest?.('[data-external]') as HTMLElement | null
-  if (!trigger) return
-  event.preventDefault() // 掐掉 webview 自己的导航（跳过去只会白屏）
-  void openExternal(trigger.dataset.external || '')
-}
-
 /* ─── 面板流程（对外契约的实现）────────────────── */
 
 /** 检查更新：用户主动发起的一次请求（受后端最短间隔与失败冷却约束） */
@@ -585,7 +404,7 @@ async function check(): Promise<UpdateInfo | null> {
   }
   // 左侧导航的提示：只有确实有新版本才亮，失败与「已是最新」都静默
   shared().wbApp?.updateUpdateBadge?.(result)
-  showUpdateModal(result)
+  showUpdateModal(result, openAndDownload)
   return result
 }
 
@@ -615,7 +434,7 @@ async function syncFromCache(): Promise<void> {
     // 导航提示与 check() 同一出口：定时任务查到新版本时也能亮起来
     shared().wbApp?.updateUpdateBadge?.(cached)
     // 首屏这条路径正是「定时任务发现新版本 → 弹一次提示」的唯一入口（旧 app.js 同）
-    showUpdateModal(cached)
+    showUpdateModal(cached, openAndDownload)
     return
   }
   setBadge('未检查')
@@ -740,7 +559,7 @@ async function openAndDownload(checkedInfo?: UpdateInfo | null): Promise<void> {
     renderCheckResult()
     shared().wbApp?.updateUpdateBadge?.(checkedInfo)
     // 此刻人已被「去更新」带到设置页，这次调用会被「人已在设置页」挡住（旧路径同）
-    showUpdateModal(checkedInfo)
+    showUpdateModal(checkedInfo, openAndDownload)
   }
   await load()
   // 已有下载在跑或安装包已就绪：那两种状态下按钮分别是「取消下载」与「安装并重启」，
@@ -827,6 +646,9 @@ function changelogCard(snap: Snapshot): React.ReactNode {
 function UpdatePanel() {
   const snap = React.useSyncExternalStore(subscribe, getSnapshot)
   const button = downloadButton(snap)
+  // 「更新设置」弹窗的开关：弹窗是本组件条件渲染的（Dialog 自带 Portal 挂 body），
+  // 读数在弹窗自己那里现拉（见 update-settings.tsx 的说明），不进模块快照
+  const [settingsOpen, setSettingsOpen] = React.useState(false)
 
   // 面板常驻（root 随应用生命周期），正常不会卸载；万一将来被卸载（骨架变化 / 页面
   // 重载），把进度轮询收掉 —— 悬挂的定时器会一直按 1 秒打后端
@@ -846,7 +668,7 @@ function UpdatePanel() {
         <h2>软件更新</h2>
         <span
           className='tip-q'
-          data-tip='更新包从 GitHub 发布页下载，下载完成后可直接启动安装程序并自动重启本程序。安装包会先校验来源域名与文件完整性；访问 GitHub 较慢时，会自动尝试通过 Clash Verge 的混合端口重试一次。'
+          data-tip='更新包从 GitHub 发布页下载，下载完成后可直接启动安装程序并自动重启本程序。安装包会先校验来源域名与文件完整性。检查更新与下载安装包的出网线路、GitHub 令牌都在「更新设置」里：线路默认直连（直连失败时自动借 Clash Verge 的混合端口重试一次），选定指定出口后只走该出口；填写 GitHub 令牌可把检查限额从 60 次/小时提高到 5000 次/小时。'
         ></span>
         {/* id 保留：app.js 的 renderTopbarStatus 按 id 镜像徽章文案与语义色（配色经
             data-tone 传；设置页顶栏那枚镜像目前还不读它，保持一致没坏处） */}
@@ -854,6 +676,16 @@ function UpdatePanel() {
           {snap.badgeText}
         </Badge>
         <div className='head-actions'>
+          {/* 「更新设置」：出网线路 + GitHub 令牌都在弹窗里（update-settings.tsx），
+              放「检查更新」左边 —— 先配好线路与令牌再检查，动线才顺 */}
+          <Button
+            id='btn-update-settings'
+            variant='outline'
+            title='出网线路与 GitHub 令牌设置'
+            onClick={() => setSettingsOpen(true)}
+          >
+            更新设置
+          </Button>
           {/* 旧 class="primary" → variant="default"；无 class → variant="outline" */}
           <Button id='btn-update-check' variant='outline' disabled={snap.checking} onClick={() => void check()}>
             {snap.checking ? '检查中…' : '检查更新'}
@@ -935,91 +767,12 @@ function UpdatePanel() {
           <div className='update-log-body' id='update-log-body'>{changelogCard(snap)}</div>
         </div>
       </div>
+
+      {/* 「更新设置」弹窗：条件渲染（Dialog 自带 Portal 挂 body，放在 section 里
+          只是声明位置，不影响视觉层级）；关闭即卸载，状态在弹窗内部自生自灭 */}
+      {settingsOpen ? <UpdateSettingsDialog open onClose={() => setSettingsOpen(false)} /> : null}
     </section>
   )
-}
-
-/* ─── 第二块：「检测到更新」弹窗（按需建、关闭即卸）── */
-
-type UpdateModalProps = {
-  /** 打开那一刻的检查结果（弹窗里的版本号与日志都是它的，不再重查） */
-  info: UpdateInfo
-  onClose: () => void
-}
-
-function UpdateModal({ info, onClose }: UpdateModalProps) {
-  const version = String(info.latestVersion || '')
-  const notes = String(info.notes || '').trim()
-  const html = notes ? markdownHtml(notes) : ''
-
-  /** 「跳过此次更新」：按版本号记进 localStorage（与旧 app.js 同一个键） */
-  function handleSkip(): void {
-    writeSkippedVersion(version)
-    onClose()
-  }
-
-  /**
-   * 「去更新」：关窗 → 切到设置页的「关于」分类 → 带着弹窗这份结果直接开始下载。
-   *
-   * 为什么走 wbApp.showPage + wbSettingsPanel.showCategory：与旧 app.js 的
-   * `#update-modal-go` 逐字对应（只切视图、不写分类偏好 —— 这是弹窗带来的深链，
-   * 不该改用户手点的默认分类）。
-   */
-  function handleGo(): void {
-    onClose()
-    const app = shared()
-    app.wbApp?.showPage?.('settings')
-    app.wbSettingsPanel?.showCategory?.('about')
-    void openAndDownload(info)
-  }
-
-  return (
-    // 受控 open（恒为 true）：关窗一律由 onClose 收口。Esc / 点遮罩 / 右上角 ✕ 都由
-    // Base UI 的 Dialog 内建（旧实现自己听 mask 点击与那个 ✕ 按钮）
-    <Dialog open onOpenChange={next => { if (!next) onClose() }}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>检测到更新</DialogTitle>
-        </DialogHeader>
-        <DialogBody>
-          <p className='text-[12.5px] leading-[1.6] text-subtle'>
-            新版本 <strong className='text-foreground'>{version}</strong> 已发布（当前{' '}
-            {info.currentVersion || '未知'}），更新日志如下：
-          </p>
-          {/* 正文限高 + 滚动（旧 .update-modal-notes 的 46vh），长日志不会把弹窗撑出一屏；
-              overscroll-contain 拦住滚动链，滚到底不带动外层页面 */}
-          <div className='max-h-[46vh] overflow-y-auto overscroll-contain pr-1.5' onClick={handleExternalClick}>
-            {html ? <div className='md-body' dangerouslySetInnerHTML={{ __html: html }} /> : (
-              <div className='md-body'>
-                <p className='md-body-empty'>这个版本没有填写发布说明。</p>
-              </div>
-            )}
-          </div>
-        </DialogBody>
-        <DialogFooter>
-          {/* 旧 .modal-foot 的布局：跳过 | spacer | 取消 + 去更新 */}
-          <Button variant='outline' size='sm' onClick={handleSkip}>跳过此次更新</Button>
-          <div className='mr-auto' />
-          <Button variant='outline' onClick={onClose}>取消</Button>
-          <Button variant='default' onClick={handleGo}>去更新</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-let modalRoot: ReturnType<typeof createRoot> | null = null
-let modalHost: HTMLElement | null = null
-
-function unmountUpdateModal(): void {
-  if (modalRoot) {
-    modalRoot.unmount()
-    modalRoot = null
-  }
-  if (modalHost) {
-    modalHost.remove()
-    modalHost = null
-  }
 }
 
 /* ─── 挂载：接管 index.html 里既有的设置分类区块 ─── */
@@ -1076,4 +829,7 @@ declare global {
   }
 }
 
-window.wbUpdatePanel = { load, check, syncFromCache, openAndDownload, showUpdateModal }
+window.wbUpdatePanel = {
+  load, check, syncFromCache, openAndDownload,
+  showUpdateModal: (info) => showUpdateModal(info, openAndDownload),
+}

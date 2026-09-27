@@ -178,6 +178,7 @@ pub fn run() {
             commands::cancel_update,
             commands::run_installer,
             commands::set_window_theme,
+            commands::set_zoom,
             commands::open_release_page,
             // 自定义标题栏的窗口三键（窗口已 decorations(false)，见建窗处）
             commands::window_minimize,
