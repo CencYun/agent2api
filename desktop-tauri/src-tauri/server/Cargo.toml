@@ -72,7 +72,7 @@ getrandom = "0.2"
 #   EC P-256，把 SPKI 公钥 PEM 塞进 ExchangeToken 的 DeviceInfo.DevicePublicKey，
 #   空值会被上游判成 HTTP 401 / 业务码 20405（设备绑定，2026-09-04 实测）；
 #   要的是 pem + pkcs8（能生成、能导出 SPKI/PKCS#8，不做验签）。
-# 两家的合并几次后统一在 0.13：它复用本仓已有的 sha2 0.10 / digest 0.10 那条链，
+# 两家合并后统一在 0.13：它复用本仓已有的 sha2 0.10 / digest 0.10 那条链，
 # 换 0.14 会再拉一份 sha2 0.11 + digest 0.11 + hmac 0.13 —— 为签名与导出多背两份
 # 哈希库不值得（PR #24 原本用的是 0.14，见提交历史）。
 p256 = { version = "0.13", features = ["ecdsa", "pem", "pkcs8"] }
