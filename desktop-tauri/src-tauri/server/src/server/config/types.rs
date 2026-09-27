@@ -575,3 +575,78 @@ pub struct TimeoutPatch {
     pub stream_idle_seconds: Option<i64>,
     pub body_seconds: Option<i64>,
 }
+
+// ─── 排队等待（走排队制的上游：目前只有 Qoder 的免费模型）─────────────
+
+/// 排队时最多等待几次（0 = 不等待，直接把排队态作为错误返回）
+pub const KEY_QUEUE_MAX_WAITS: &str = "queueMaxWaits";
+/// 单次排队等待的秒数（0 = 跟随上游建议值）
+pub const KEY_QUEUE_WAIT_SECONDS: &str = "queueWaitSeconds";
+
+/// 默认等待次数：2 次。
+///
+/// 与参考实现（CLIProxyAPI 的 qoder2api 插件 `queue_max_waits` 默认值）取同一
+/// 档：上游给的建议间隔实测 9～30 秒，两次最多等一分钟 —— 落在「用户还能接受
+/// 的首字等待」与「默认 300 秒的等待响应超时」之间。
+pub const DEFAULT_QUEUE_MAX_WAITS: i64 = 2;
+/// 默认单次等待秒数：0 = 跟随上游建议（上游没给建议时适配器退到 15 秒）
+pub const DEFAULT_QUEUE_WAIT_SECONDS: i64 = 0;
+
+/// 等待次数的合法范围 0~10：0 = 关闭等待（排队即报错）。上限 10 是因为
+/// 「等一会儿再发」等得太多次不如让客户端自己决定重试 —— 它会收到一条写清
+/// 「排队中、不是登录态或额度问题」的错误，而不是一个看不出所以然的超时。
+pub const QUEUE_MIN_MAX_WAITS: i64 = 0;
+pub const QUEUE_MAX_MAX_WAITS: i64 = 10;
+/// 单次等待秒数的合法范围 0~120（0 = 跟随上游建议）
+pub const QUEUE_MIN_WAIT_SECONDS: i64 = 0;
+pub const QUEUE_MAX_WAIT_SECONDS: i64 = 120;
+
+/// 排队等待设置（设置页「通用 → 排队等待」区域）。
+///
+/// 与 `TimeoutSettings` 同一取舍：两个值总是一起用（每次排队判定取一份快照），
+/// 打包成一个 `Copy` 值让调用方一次拿到。
+///
+/// ── 它影响谁 ────────────────────────────────────────────────
+/// 只有**走排队制的适配器**读它（目前是 Qoder：免费模型繁忙时上游用 403 +
+/// 业务码 10605 回一句「暂不可服务，建议 N 秒后再来」）。其它家没有排队语义，
+/// 这份设置对它们无影响。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct QueueSettings {
+    /// 最多等待次数（0 = 不等待）
+    pub max_waits: i64,
+    /// 单次等待秒数（0 = 跟随上游建议值）
+    pub wait_seconds: i64,
+}
+
+impl QueueSettings {
+    /// 等待次数预算（负值按 0：读侧已保证范围，这里是防御性的）
+    pub fn wait_budget(&self) -> usize {
+        self.max_waits.clamp(QUEUE_MIN_MAX_WAITS, QUEUE_MAX_MAX_WAITS) as usize
+    }
+
+    /// 强制单次等待时长（毫秒）；`None` = 跟随上游建议
+    pub fn forced_wait_ms(&self) -> Option<u64> {
+        let seconds = self.wait_seconds.clamp(QUEUE_MIN_WAIT_SECONDS, QUEUE_MAX_WAIT_SECONDS);
+        if seconds > 0 {
+            Some(seconds as u64 * 1000)
+        } else {
+            None
+        }
+    }
+}
+
+impl Default for QueueSettings {
+    fn default() -> Self {
+        Self {
+            max_waits: DEFAULT_QUEUE_MAX_WAITS,
+            wait_seconds: DEFAULT_QUEUE_WAIT_SECONDS,
+        }
+    }
+}
+
+/// 排队等待的**部分**更新入参（`None` = 该项不动）。
+#[derive(Clone, Copy, Debug, Default)]
+pub struct QueuePatch {
+    pub max_waits: Option<i64>,
+    pub wait_seconds: Option<i64>,
+}

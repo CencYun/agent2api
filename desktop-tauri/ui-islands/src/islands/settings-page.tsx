@@ -22,6 +22,7 @@ import {
   CATEGORIES,
   NOTES,
   PROMPT_MODES,
+  QUEUE_FIELDS,
   RETENTION_FIELDS,
   RETRY_FIELDS,
   STATES,
@@ -43,6 +44,7 @@ import {
   panelLogout,
   refreshDebug,
   refreshPrompt,
+  refreshQueue,
   refreshRetention,
   refreshRetry,
   refreshSanitize,
@@ -62,6 +64,7 @@ import {
   saveDebug,
   savePromptFile,
   savePromptMode,
+  saveQueueField,
   saveRetentionField,
   saveRetryField,
   saveSanitize,
@@ -545,6 +548,29 @@ function GatewayPane({ snap }: { snap: SettingsSnapshot }) {
             ))}
           </div>
           <div className='hint retention-note'>{NOTES.timeouts}</div>
+        </div>
+      </section>
+
+      <section className='panel'>
+        <PanelHead
+          title='排队等待'
+          tip={TIPS.queue}
+          badge={numericBadge(snap.queue)}
+          actions={<RefreshButton id='btn-queue-refresh' onClick={() => void refreshQueue()} />}
+        />
+        <div className='panel-body'>
+          <div className='retention-list'>
+            {QUEUE_FIELDS.map(field => (
+              <NumberRow
+                key={field.key}
+                field={field}
+                value={snap.queue.values?.[field.key] ?? null}
+                disabled={snap.busy === 'queue'}
+                onCommit={raw => saveQueueField(field, raw)}
+              />
+            ))}
+          </div>
+          <div className='hint retention-note'>{NOTES.queue}</div>
         </div>
       </section>
 

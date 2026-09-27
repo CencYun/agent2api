@@ -105,6 +105,11 @@ pub struct RuntimeConfig {
     /// 与 retry 同一理由：转发层**每次发送 / 每次分片**都要取它（改完设置
     /// 下一个请求就用新值，不重启进程），解析一次存下来最省事。
     timeouts: TimeoutSettings,
+    /// 排队等待的次数与单次时长（设置页「通用 → 排队等待」区域）。
+    ///
+    /// 与 timeouts 同一理由：走排队制的适配器**每次遇到排队**都要取它
+    /// （改完设置下一个请求就用新值，不重启进程），解析一次存下来最省事。
+    queue: QueueSettings,
     /// 事件日志的保存目录（原始配置值；None = 未设置，用配置目录）。
     /// 低频字段（启动 + 设置页读写），不值得为它发明解析层，存原始值即可。
     log_dir: Option<String>,
@@ -360,6 +365,7 @@ fn build(raw: Map<String, Value>) -> RuntimeConfig {
     let scheduled = scheduled_from(&raw);
     let retry = retry_from(&raw);
     let timeouts = timeouts_from(&raw);
+    let queue = queue_from(&raw);
     RuntimeConfig {
         // 文件里有就用文件的，否则环境变量兜底（对应 `if (config.apiKey && !opts.apiKey)`）
         api_key: string_field(&raw, "apiKey").or_else(env_api_key),
@@ -372,6 +378,7 @@ fn build(raw: Map<String, Value>) -> RuntimeConfig {
         scheduled,
         retry,
         timeouts,
+        queue,
         log_dir: string_field(&raw, KEY_LOG_DIR),
         request_stats_dir: string_field(&raw, KEY_REQUEST_STATS_DIR),
         debug_dir: string_field(&raw, KEY_DEBUG_DIR),
@@ -893,6 +900,45 @@ pub fn set_timeouts(patch: TimeoutPatch) -> bool {
             write(KEY_TIMEOUT_BODY_SECONDS, seconds, &mut next.body_seconds);
         }
         config.timeouts = next;
+    })
+}
+
+// ─── 排队等待（queueMaxWaits / queueWaitSeconds）──────────────
+
+/// 只取排队等待的两项（**不克隆整份 raw**）。
+///
+/// 与 `timeout_settings()` 同一取舍：走排队制的适配器每次遇到排队都要取一次，
+/// 读锁取一份 `Copy` 快照即可。未初始化时给默认值。
+pub fn queue_settings() -> QueueSettings {
+    if let Ok(guard) = CONFIG.read() {
+        if let Some(config) = guard.as_ref() {
+            return config.queue;
+        }
+    }
+    QueueSettings::default()
+}
+
+/// 更新排队等待（`None` = 该项不动），返回是否写盘成功。
+///
+/// 调用方（`queue_api::put_queue`）**必须先校验范围**：本函数按「已合法」处理，
+/// 越界值会被 `bounded_int_field` 的回读逻辑丢弃。与 `set_timeouts` 同一模式：
+/// 内存快照与 raw 底稿一起改。
+pub fn set_queue(patch: QueuePatch) -> bool {
+    update(|config| {
+        let mut next = config.queue;
+        if let Some(count) = patch.max_waits {
+            config
+                .raw
+                .insert(KEY_QUEUE_MAX_WAITS.to_string(), Value::from(count));
+            next.max_waits = count;
+        }
+        if let Some(seconds) = patch.wait_seconds {
+            config
+                .raw
+                .insert(KEY_QUEUE_WAIT_SECONDS.to_string(), Value::from(seconds));
+            next.wait_seconds = seconds;
+        }
+        config.queue = next;
     })
 }
 

@@ -488,6 +488,10 @@ const BRIDGE_JS: &str = r#"
     // 契约同 saveRetry：PUT 允许部分字段，返回生效后的全量值。
     getTimeouts: () => call('GET', '/api/timeouts'),
     saveTimeouts: patch => call('PUT', '/api/timeouts', patch),
+    // ── 排队等待（设置页「通用 → 排队等待」）──
+    // 次数 / 单次秒数，存配置（/api/queue）。契约同 saveTimeouts。
+    getQueue: () => call('GET', '/api/queue'),
+    saveQueue: patch => call('PUT', '/api/queue', patch),
 
     // ── 调试模式（设置页「通用 → 调试模式」）──
     // 开关存配置（debugMode）：开启后转发层把上游原始报文（凭据类头已脱敏）
