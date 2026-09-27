@@ -30,7 +30,7 @@ use std::time::Duration;
 
 use axum::body::Bytes;
 use axum::extract::{Query, State};
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use serde_json::{json, Value};
 
 use crate::server::api::health::UNCONFIGURED_REASON;
@@ -862,7 +862,7 @@ fn oauth_callback_page(status: i32, message: &str) -> Response {
         .replace('"', "&quot;");
     let html = format!(
         "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">\
-         <title>AutoClaw 登录</title></head>\
+         <title>登录回调</title></head>\
          <body style=\"font-family:system-ui,sans-serif;padding:48px;text-align:center\">\
          <p style=\"font-size:16px\">{escaped}</p></body></html>"
     );
@@ -913,6 +913,58 @@ pub async fn login_accio_callback(
             state.login().drop_accio_pending(&task_state);
             oauth_callback_page(error.status_code, &format!("登录失败：{}", error.message))
         }
+    }
+}
+
+// ─── /oauth/callback（CodeArts portal 的登录回调）─────────────
+
+/// CodeArts 网页登录的回调。**路径不是我们能定的**：portal 只认授权地址里给的
+/// `port`，回调路径固定拼成 `http://127.0.0.1:<port>/oauth/callback`（见
+/// `providers::codearts::oauth::authorize_url`），所以这条路由必须用官方那个名字，
+/// 不能像 accio 一样自己挑一个别家撞不到的。
+///
+/// 免鉴权的理由与 accio / catpaw / autoclaw 四条 loopback 回调同一句：调用方是
+/// **用户的浏览器**，它当然没有我们的 API Key。
+///
+/// 两次回调（portal 先带 `secret`+`redirect`、再带 `code`）都落在这里，
+/// 归属判定与 ticket 兜底见 `core::login::codearts` 的模块头。
+///
+/// POST 也要：官方 portal 在某些链路上把 `code` 放在表单体里送回来（参考实现与
+/// `hitzy-codearts2api` 都为此留了兼容分支），只收 GET 会在那种链路上永远等不到码。
+pub async fn login_codearts_callback(
+    State(state): State<ServerState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    render_codearts_callback(state.login().finish_codearts_login(&params).await)
+}
+
+/// 同上，但参数在表单里（`application/x-www-form-urlencoded` 或裸查询串形态的 body）。
+pub async fn login_codearts_callback_post(
+    State(state): State<ServerState>,
+    body: Bytes,
+) -> Response {
+    let text = String::from_utf8_lossy(&body).to_string();
+    let mut params: std::collections::HashMap<String, String> =
+        url::form_urlencoded::parse(text.as_bytes()).map(|(k, v)| (k.into_owned(), v.into_owned())).collect();
+    // 上游也可能把整条回调 URL 塞进某个字段（代理过的链路），那一路径先按查询串拆一次
+    if params.is_empty() {
+        if let Some((_, query)) = text.split_once('?') {
+            params = url::form_urlencoded::parse(query.as_bytes())
+                .map(|(k, v)| (k.into_owned(), v.into_owned()))
+                .collect();
+        }
+    }
+    render_codearts_callback(state.login().finish_codearts_login(&params).await)
+}
+
+/// 三种收尾各回什么给浏览器。
+fn render_codearts_callback(outcome: crate::server::core::login::codearts::Callback) -> Response {
+    use axum::response::Redirect;
+    match outcome {
+        // 第一趟必须原样转出去：这一跳是 portal 登录链路的一部分，不跳就没有第二趟
+        crate::server::core::login::codearts::Callback::ContinueTo(url) => Redirect::temporary(&url).into_response(),
+        crate::server::core::login::codearts::Callback::Accepted(_, message) => oauth_callback_page(200, &message),
+        crate::server::core::login::codearts::Callback::Failed(status, message) => oauth_callback_page(i32::from(status), &message),
     }
 }
 

@@ -222,6 +222,8 @@ impl AccountStore {
             self.to_autoclaw_public_account(record)
         } else if record.provider() == super::QODER_PROVIDER_ID {
             self.to_qoder_public_account(record)
+        } else if record.provider() == super::codearts_accounts::CODEARTS_PROVIDER_ID {
+            self.to_codearts_public_account(record)
         } else if super::is_cline_family(&record.provider()) {
             // 两个池（`cline-free` / `cline-pass`）共用这一份公开形态
             self.to_cline_public_account(record)

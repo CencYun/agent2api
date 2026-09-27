@@ -91,6 +91,7 @@ pub mod autoclaw_import;
 pub mod catpaw_accounts;
 pub mod catpaw_import;
 pub mod cline_accounts;
+pub mod codearts_accounts;
 pub mod custom_accounts;
 pub mod priority;
 pub mod qoder_accounts;

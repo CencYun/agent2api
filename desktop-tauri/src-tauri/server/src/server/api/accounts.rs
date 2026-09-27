@@ -264,6 +264,21 @@ pub async fn dispatch(
                 return super::zcode_claim::preview(&state, &id).await;
             }
         }
+        // CodeArts 每日福利：先探测（只读）再领取（写）。
+        // 顺序上 preview 必须排在前面 —— 两个后缀互不包含，但读的时候按用户
+        // 的操作顺序排列，与上面 ZCode 那三条同一写法。
+        if let Some(id) = rest.strip_suffix("/codearts-welfare/preview") {
+            let id = decode_segment(id);
+            if !id.is_empty() {
+                return super::codearts_welfare::preview(&state, &id).await;
+            }
+        }
+        if let Some(id) = rest.strip_suffix("/codearts-welfare") {
+            let id = decode_segment(id);
+            if !id.is_empty() {
+                return super::codearts_welfare::claim(&state, &id, body).await;
+            }
+        }
         if let Some(id) = rest.strip_suffix("/zcode-claim") {
             let id = decode_segment(id);
             if !id.is_empty() {
@@ -385,6 +400,16 @@ pub async fn add_account(state: &ServerState, body: &Bytes) -> Response {
                 store.import_autoclaw_desktop_account(region, "manual")
             } else {
                 store.add_autoclaw_account(region, &payload, import_name)
+            }
+        }
+        // CodeArts：粘贴凭证（AK/SK/STS + domain/user + 可选的 refresh token 与
+        // oauth_context）。**不调上游**——凭据是登录换来的，添加时没有可交换的
+        // 授权码；目录与连通性由刷新链路验。
+        // 网页登录（要 DPoP + PKCE 回调）在 M5 后续切片，届时这里加一条分支。
+        Some(crate::server::core::providers::ProviderKind::CodeArts) => {
+            match crate::server::core::providers::codearts::credentials::Credential::from_payload(&payload) {
+                Ok(credential) => store.add_codearts_account(&credential, import_name, "manual"),
+                Err(reason) => Err(AccountStoreError::new(reason, 400)),
             }
         }
         Some(crate::server::core::providers::ProviderKind::Qoder) => {
@@ -681,6 +706,13 @@ pub async fn refresh_account(state: &ServerState, body: &Bytes) -> Response {
     }
     if state.store().qoder_account_record(&id).is_some() {
         return refresh_provider_account(state, &id, ProviderKind::Qoder).await;
+    }
+    // CodeArts：一次性 refresh token + 写回，必须走适配器。
+    // **这条不能省**：漏了就会落到下面的 workbuddy 兜底链路，用户得到一条与
+    // 本家毫无关系的错误（沙箱端到端实测抓到的原文是
+    // `auth/token/refresh 失败: client key [] not found`）。
+    if state.store().codearts_account_record(&id).is_some() {
+        return refresh_provider_account(state, &id, ProviderKind::CodeArts).await;
     }
     // Accio（两个地区）：走适配器的强制刷新（`POST /api/auth/refresh_token`，
     // 结果按「比较再写」回写）。两个地区各查一次 —— 账号集合按 provider 隔离，

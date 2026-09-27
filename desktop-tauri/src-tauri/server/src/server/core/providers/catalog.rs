@@ -77,6 +77,10 @@ pub(crate) fn refresh_meta(kind: ProviderKind) -> (bool, i64) {
                 || super::qoder::models::remote_refreshed(super::qoder::endpoints::Region::Cn),
             super::qoder::models::last_refreshed_at(),
         ),
+        ProviderKind::CodeArts => (
+            super::codearts::models::remote_refreshed(),
+            super::codearts::models::last_refreshed_at(),
+        ),
         ProviderKind::CatPaw => (
             !super::catpaw::catalog::remote_models().is_empty(),
             super::catpaw::catalog::last_refreshed_at(),

@@ -250,8 +250,16 @@ fn allowed_hosts(provider: &str) -> Option<&'static [&'static str]> {
         // 提供方，主机不可穷举。**必须显式列出** —— 落进默认分支会拿到 WorkBuddy
         // 的白名单，症状正是上面警告的那种：窗口一片空白，而日志上什么也看不出。
         // 两个地区都列：它们共用同一个授权域，任缺一个都会在将来复用时踩到。
+        //
+        // CodeArts 同样不设限：授权页在 `codearts.huaweicloud.com/portal/authorize`，
+        // 它会按用户选的登录方式继续跳华为云账号（`account.huaweicloud.com`）、
+        // IAM 委托、扫码等不可穷举的主机；最后还要回到**网关自己的** loopback 端口
+        // 拿授权码（portal 只认我们给的 port，回调路径由它拼死，见
+        // `providers::codearts::oauth::authorize_url`）。那条 loopback 导航一旦被
+        // 白名单拦下，症状就是上面警告过的那种：用户在官方页面明明登录成功，
+        // 网关却永远等不到码。
         "catpaw" | "qoder" | "cline-free" | "cline-pass" | "autoclaw" | "autoclaw-intl"
-        | "accio" | "accio-cn" | "zcode" | "zcode-intl" => None,
+        | "accio" | "accio-cn" | "zcode" | "zcode-intl" | "codearts" => None,
         _ => Some(WORKBUDDY_ALLOWED_HOSTS),
     }
 }

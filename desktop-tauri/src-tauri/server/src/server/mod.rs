@@ -288,6 +288,9 @@ impl ServerState {
         // 端口在进程生命周期内不变，这里写一次、之后只读 —— 与各家 models 的
         // 进程级缓存同一手法（见 `providers::accio::oauth::set_loopback_port`）。
         crate::server::core::providers::accio::oauth::set_loopback_port(port);
+        // CodeArts 同理：授权地址由适配器拼（同步无参），而 portal 只认 `port`，
+        // 所以端口要在发起登录之前就写在进程级常量里（见该模块 `set_loopback_port`）。
+        crate::server::core::providers::codearts::oauth::set_loopback_port(port);
         let config_dir = config::config_dir();
         // 与 Node 版一致：verbose 由环境变量 AGENT2API_VERBOSE=1 打开
         // （旧名 WORKBUDDY_VERBOSE 仍可读，新名优先），

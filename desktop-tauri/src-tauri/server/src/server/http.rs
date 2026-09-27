@@ -124,6 +124,13 @@ pub fn panel_router(state: ServerState) -> Router {
         .route(
             "/auth/callback-accio",
             get(api::session::login_accio_callback),
+        )
+        // CodeArts portal 的登录回调：**路径由上游定死**（它只认我们给的 port，
+        // 拼成 `http://127.0.0.1:<port>/oauth/callback`），所以这条不能像上面几家
+        // 那样挑一个别家撞不到的名字。GET 收查询串、POST 收表单里的 code。
+        .route(
+            "/oauth/callback",
+            get(api::session::login_codearts_callback).post(api::session::login_codearts_callback_post),
         );
 
     // 需鉴权：Node 版对这些路径都调用了 checkApiKey
