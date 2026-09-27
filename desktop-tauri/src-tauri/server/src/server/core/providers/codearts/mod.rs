@@ -5,10 +5,12 @@
 //! 凭据是一次 OAuth/PKCE 登录换来的**临时**三元组、到期前 15 分钟就要续。
 //! 移植的语义来源与逐条依据见 `cpa-deploy/notes/agent2api-codearts-port-plan.md`。
 //!
-//! 当前进度：M0–M5 完成 —— 签名 / 凭据+DPoP+OAuth+单飞 / 错误信封 / 脱敏 /
-//! 请求构造+聚合+首包门 / 会话心跳+准入 / 目录三源 / provider 体系与账号存储接线，
-//! 转发入口 `forward_conversation` 已在沙箱网关上真上游跑通（流式 + 非流式）。
-//! 剩下的：领取与余额（M6）、与本机 CPA 对拍（M7）、面板登录入口。
+//! 全链已接齐：签名（`signer`）/ 凭据 + DPoP + OAuth + 单飞续期（`credentials`、
+//! `dpop`、`oauth`、`refresh`）/ 错误信封（`stream_fault`）/ 脱敏（`redact`）/
+//! 请求构造 + 聚合 + 首包门（`chat`）/ 会话心跳与准入（`session`）/
+//! 目录三源（`models`）/ 余额两份账（`balance`）/ 每日福利领取（`welfare`）/
+//! provider 体系与账号存储接线；转发入口 `forward_conversation` 已在沙箱网关上
+//! 真上游跑通（流式 + 非流式）。
 
 pub mod balance;
 pub mod chat;
@@ -293,9 +295,9 @@ impl ProviderAdapter for CodeArtsAdapter {
     }
 
     /// 一次性 refresh token 决定了这条开关的分量：刷一次就轮换，所以
-    /// `supports_refresh` 必须与「把新串写回账号存储」同时成立，否则等于烧掉凭据
-    /// 且新串丢失（账号直接判死刑）。M5 的写回通路（`refresh::ensure_fresh` →
-    /// `update_codearts_credentials_if_current`）就绪后，这里与下面三个钩子一起打开。
+    /// `supports_refresh` 与「把新串写回账号存储」必须同时成立，否则等于烧掉凭据
+    /// 且新串丢失（账号直接判死刑）。写回通路在 `refresh::ensure_fresh` →
+    /// `update_codearts_credentials_if_current`（按凭据形态比对后再写，见 store 侧）。
     fn supports_refresh(&self) -> bool {
         true
     }

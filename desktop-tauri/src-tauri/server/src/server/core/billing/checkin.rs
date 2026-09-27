@@ -84,10 +84,15 @@ pub fn supports_checkin(account: &Value) -> bool {
         .get("provider")
         .and_then(Value::as_str)
         .unwrap_or(crate::server::core::providers::DEFAULT_PROVIDER_ID);
-    // CodeArts 目前没有签到/领取链路（每日福利领取在 M6），必须先排除：
-    // `checkin_for` 的分派 match 把「不在范围里的家」兜到 workbuddy 分支，
-    // 拿 CodeArts 的 AK/SK 去打腾讯的签到接口只会稳定报错。
-    if provider == crate::server::core::account_store::codearts_accounts::CODEARTS_PROVIDER_ID {
+    // CodeArts 与 Trae 两家都没有「签到」链路，必须先排除：
+    // `checkin_for` 的分派 match 把「不在范围里的家」报成「未接入」，而这两家
+    // 的按钮在界面上由能力位 `checkin: false` 收起 —— 这一层是批量路径
+    // （`resolve_checkin_targets` 的 filter）与 API 直调的兜底，双保险。
+    // 注意 CodeArts 的每日福利**不是**签到（那是 ops 福利领取，独立的「领福利」
+    // 按钮，见 `providers::codearts::welfare`），与这条链无交集。
+    if provider == crate::server::core::account_store::codearts_accounts::CODEARTS_PROVIDER_ID
+        || provider == crate::server::core::account_store::TRAE_PROVIDER_ID
+    {
         return false;
     }
     !crate::server::core::account_store::is_accio_family(provider)
