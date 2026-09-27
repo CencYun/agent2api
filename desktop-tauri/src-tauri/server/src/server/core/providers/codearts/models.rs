@@ -84,6 +84,18 @@ pub struct ModelConfig {
     pub max_output_tokens: i64,
     pub supports_images: bool,
     pub source: ModelSource,
+    /// 积分倍率的**官方文案**（上游 `credit[].ratio_display`，形如 `0.7x`）。
+    ///
+    /// 空串 = 上游没给（福利源就没有这个字段），界面那一列显示 `—`。
+    ///
+    /// ── 为什么取 `ratio_display` 而不是 `ratio` ────────────────
+    /// 同一份 fixture 里 `ratio` 是 `0.05` / `0.028` / `0.011`，而
+    /// `ratio_display` 是 `0.7x` / `0.7x` / `0.32x` —— 两者**不是一个量纲**
+    /// （`ratio` 更像"每 token 系数"，display 才是官网上那颗倍率徽章）。
+    /// 倍率列是给人对照官方客户端看的，所以取 display 原样透传，
+    /// 与 AutoClaw 那条「上游给的是档位文案就原样显示，不换算成编造的数」
+    /// 同一条口径（见 `autoclaw/catalog.rs` 的 `creditConsumptionLevel`）。
+    pub credit_display: String,
 }
 
 /// 合并后的清单 + 诊断信息。
@@ -146,6 +158,7 @@ pub fn parse_builtin(body: &str) -> Result<Vec<ModelConfig>, String> {
             context_length: number(entry, "context_window"),
             max_output_tokens: number(entry, "max_tokens"),
             supports_images: entry.get("supports_images").and_then(Value::as_bool).unwrap_or(false),
+            credit_display: credit_display_of(entry),
             id,
             source: ModelSource::Builtin,
         });
@@ -196,6 +209,7 @@ pub fn parse_agent_detail(body: &str, language: &str) -> Result<Vec<ModelConfig>
             context_length: number(&parameters, "context_window"),
             max_output_tokens: number(&parameters, "max_tokens"),
             supports_images: parameters.get("supports_images").and_then(Value::as_bool).unwrap_or(false),
+            credit_display: credit_display_of(&entry),
             id,
             source: ModelSource::Agent,
         });
@@ -272,6 +286,9 @@ pub fn parse_benefit(body: &str) -> Result<Vec<ModelConfig>, String> {
             context_length: number(&entry, "context_window"),
             max_output_tokens: number(&entry, "max_tokens"),
             supports_images: false,
+            // 福利网关的条目没有 `credit`（实测三个源里只有 agent 与 builtin 带），
+            // 留空 = 界面那一列显示 `—`，不是"倍率为 0"。
+            credit_display: String::new(),
             id,
             source: ModelSource::Benefit,
         });
@@ -499,6 +516,39 @@ fn number(value: &Value, key: &str) -> i64 {
     value.get(key).and_then(Value::as_i64).unwrap_or(0)
 }
 
+/// `credit[]` → 倍率文案（`ratio_display`）。
+///
+/// 上游按**输入长度分档**给多条（实测同一模型有 `input_from:0..32000` 与
+/// `32001..∞` 两条，`-1` 是"无上限"），而倍率列只有一格，所以取
+/// **基础档**（`input_from == 0`）那一条 —— 与官网徽章一致。
+///
+/// 三条保守规则：
+/// * `status` 显式非 `"0"` 的档跳过（缺字段当生效，别让上游删字段就整列空掉）；
+/// * 没有基础档时退回第一条能读出文案的档，而不是回空；
+/// * 原样透传，不解析成数字（`ratio` 与它是两个量纲，见 `ModelConfig::credit_display`）。
+fn credit_display_of(entry: &Value) -> String {
+    let Some(tiers) = entry.get("credit").and_then(Value::as_array) else {
+        return String::new();
+    };
+    let mut fallback = String::new();
+    for tier in tiers {
+        if matches!(tier.get("status").and_then(Value::as_str), Some(value) if value.trim() != "0") {
+            continue;
+        }
+        let display = text(tier, "ratio_display");
+        if display.is_empty() {
+            continue;
+        }
+        if number(tier, "input_from") == 0 {
+            return display;
+        }
+        if fallback.is_empty() {
+            fallback = display;
+        }
+    }
+    fallback
+}
+
 fn first_non_empty(values: &[String]) -> String {
     values
         .iter()
@@ -603,6 +653,7 @@ fn catalog_from_persisted() -> Option<Catalog> {
             context_length: entry.get("contextWindow").and_then(Value::as_i64).unwrap_or(0),
             max_output_tokens: entry.get("maxOutputTokens").and_then(Value::as_i64).unwrap_or(0),
             supports_images: entry.get("supportsImages").and_then(Value::as_bool).unwrap_or(false),
+            credit_display: text("credits"),
             name: id.clone(),
             source,
             id,
@@ -690,6 +741,12 @@ fn entries_of(catalog: &Catalog) -> Vec<Value> {
             if !model.description.is_empty() {
                 entry.insert("description".to_string(), Value::String(model.description.clone()));
             }
+            // 倍率列：`credits` 是本仓跨家共用的键（前端 `formatCredits` 认 `x…` 形态，
+            // 认不出就原样显示），上游给的 `0.7x` 属于后者 —— 与 AutoClaw 的档位文案
+            // 走同一条渲染分支。空串不写这个键，界面显示 `—`（"没读到"而不是"0 倍"）。
+            if !model.credit_display.is_empty() {
+                entry.insert("credits".to_string(), Value::String(model.credit_display.clone()));
+            }
             Value::Object(entry)
         })
         .collect()
@@ -757,6 +814,57 @@ mod tests {
         assert!(models.iter().all(|model| model.source == ModelSource::Agent));
         // `model_id` 在顶层是 null，靠 model_alias 与嵌套 model_parameters.model_id 兜住
         assert!(models.iter().all(|model| !model.id.is_empty()));
+    }
+
+    /// 倍率列：取 `credit[].ratio_display`，不是 `credit[].ratio`。
+    ///
+    /// 用真 fixture 断言三件事：有倍率的模型出的是官网那颗徽章的数；
+    /// **没有 `credit` 的模型必须是空串**（界面显示 `—`，"没读到"），
+    /// 而不是 0 —— 0 在倍率列的语义是"免费"，那是编出来的。
+    #[test]
+    fn the_multiplier_column_comes_from_ratio_display() {
+        let models = parse_agent_detail(AGENT_DETAIL, "en-us").expect("真实 agent detail 应当能解析");
+        let display_of = |id: &str| {
+            models
+                .iter()
+                .find(|model| model.id == id)
+                .map(|model| model.credit_display.as_str())
+                .unwrap_or("<没有这一条>")
+        };
+        assert_eq!("0.7x", display_of("GLM-5.2"), "上游 ratio 是 0.05，倍率徽章是 0.7x —— 两个量纲");
+        assert_eq!("0.32x", display_of("openpangu-2.0-flash"));
+        assert_eq!("0.7x", display_of("openpangu-2.0-pro"), "分档模型取基础档");
+
+        let builtin = parse_builtin(BUILTIN).expect("真实 builtin 响应应当能解析");
+        let vision = builtin.iter().find(|model| model.id == "Qwen3-VL-235B").expect("多模态条目应当在");
+        assert!(vision.credit_display.is_empty(), "该模型上游根本没给 credit 数组，不能凭空写 0");
+        assert!(
+            builtin.iter().any(|model| model.id == "GLM-5.2" && model.credit_display == "0.7x"),
+            "两个源都带 credit 时都要解析出来"
+        );
+    }
+
+    /// `credit[]` 的三条保守规则：基础档优先、`status != "0"` 跳过、缺字段不整列空掉。
+    #[test]
+    fn tiered_credit_rows_pick_the_base_tier_and_skip_inactive_ones() {
+        let body = r#"{"gpts":{"models":[
+            {"model_alias":"base-first","model_parameters":{"model_id":"base-first","display_enabled":true},
+             "credit":[{"input_from":32001,"ratio_display":"2x","status":"0"},{"input_from":0,"ratio_display":"0.5x","status":"0"}]},
+            {"model_alias":"only-off","model_parameters":{"model_id":"only-off","display_enabled":true},
+             "credit":[{"input_from":0,"ratio_display":"9x","status":"1"},{"input_from":0,"ratio_display":"0.3x","status":"0"}]},
+            {"model_alias":"no-status","model_parameters":{"model_id":"no-status","display_enabled":true},
+             "credit":[{"input_from":0,"ratio_display":"1.2x"}]},
+            {"model_alias":"no-credit","model_parameters":{"model_id":"no-credit","display_enabled":true}},
+            {"model_alias":"upper-only","model_parameters":{"model_id":"upper-only","display_enabled":true},
+             "credit":[{"input_from":32001,"ratio_display":"1.8x","status":"0"}]}
+        ]}}"#;
+        let models = parse_agent_detail(body, "en-us").unwrap();
+        let display_of = |id: &str| models.iter().find(|m| m.id == id).map(|m| m.credit_display.as_str()).unwrap();
+        assert_eq!("0.5x", display_of("base-first"), "两条档都要，取 input_from==0 那条（数组顺序不可信）");
+        assert_eq!("0.3x", display_of("only-off"), "status 非 0 的档跳过");
+        assert_eq!("1.2x", display_of("no-status"), "缺 status 当生效，别因为上游删字段就整列空掉");
+        assert_eq!("", display_of("no-credit"), "没有 credit = 没读到");
+        assert_eq!("1.8x", display_of("upper-only"), "只有高档时退回它，而不是回空");
     }
 
     /// 两条过滤规则：`enabled == false` 与 **`display_enabled` 缺失**都要跳过。
@@ -839,6 +947,9 @@ mod tests {
         let benefit = full.iter().find(|model| model.id == "glm-5.3-flash").unwrap();
         assert!(benefit.source.needs_benefit_header(), "福利模型要带 maas_type");
         assert!(!full.iter().find(|model| model.id == "GLM-5.2").unwrap().source.needs_benefit_header());
+        // 倍率随条目一起活过合并；福利源没有 credit，保持空串
+        assert_eq!("0.7x", full.iter().find(|model| model.id == "GLM-5.2").unwrap().credit_display);
+        assert!(benefit.credit_display.is_empty(), "福利网关不给倍率，界面那列就该是 —");
     }
 
     /// 大小写归一：客户端习惯小写，上游真名是 `GLM-5.2`。
@@ -863,7 +974,8 @@ mod tests {
     /// 否则两个测试会互相把对方的清单盖掉（同一份 OnceLock 单例）。
     static CACHE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    /// 缓存 → `list()` 的形状：camelCase 键、`contextWindow` 为 0 时不写这个键。
+    /// 缓存 → `list()` 的形状：camelCase 键、`contextWindow` 为 0 时不写这个键、
+    /// 倍率走共用的 `credits` 键（空串不写 = 界面 `—`，而不是"0 倍"）。
     #[test]
     fn cache_to_list_uses_the_adapter_entry_shape() {
         let _guard = CACHE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -877,6 +989,7 @@ mod tests {
                     context_length: 202752,
                     max_output_tokens: 131072,
                     supports_images: false,
+                    credit_display: "0.7x".to_string(),
                     source: ModelSource::Agent,
                 },
                 ModelConfig {
@@ -887,6 +1000,7 @@ mod tests {
                     context_length: 0,
                     max_output_tokens: 0,
                     supports_images: true,
+                    credit_display: String::new(),
                     source: ModelSource::Builtin,
                 },
             ],
@@ -900,6 +1014,10 @@ mod tests {
         assert_eq!(false, entries[0]["supportsImages"]);
         assert_eq!("agent", entries[0]["source"]);
         assert_eq!(false, entries[0]["benefit"]);
+        // 倍率列：非空才写 `credits`（前端 `formatCredits` 认不出 `0.7x` 这种形态时
+        // 会原样显示，与 AutoClaw 的「低/中/高」同一条分支）
+        assert_eq!("0.7x", entries[0]["credits"]);
+        assert!(entries[1].get("credits").is_none(), "上游没给倍率就不要编一个 0");
         // 0 不写这个键（"未知" 与 "没有上下文" 含义不同）
         assert!(entries[1].get("contextWindow").is_none());
         assert_eq!(true, entries[1]["supportsImages"]);
@@ -940,6 +1058,7 @@ mod tests {
             context_length: 0,
             max_output_tokens: 0,
             supports_images: false,
+            credit_display: String::new(),
             source,
         };
         let merged = merge_agent_and_builtin(
@@ -980,6 +1099,7 @@ mod restart_tests {
                     context_length: 200_000,
                     max_output_tokens: 131_072,
                     supports_images: false,
+                    credit_display: String::new(),
                     source: ModelSource::Agent,
                 },
                 ModelConfig {
@@ -990,6 +1110,7 @@ mod restart_tests {
                     context_length: 0,
                     max_output_tokens: 0,
                     supports_images: true,
+                    credit_display: String::new(),
                     source: ModelSource::Builtin,
                 },
             ],
@@ -1024,6 +1145,7 @@ mod restart_tests {
                 context_length: 0,
                 max_output_tokens: 0,
                 supports_images: false,
+                credit_display: String::new(),
                 source: ModelSource::Benefit,
             }],
             warnings: vec![],
@@ -1047,6 +1169,7 @@ mod restart_tests {
                 context_length: 0,
                 max_output_tokens: 0,
                 supports_images: false,
+                credit_display: String::new(),
                 source,
             });
         }
