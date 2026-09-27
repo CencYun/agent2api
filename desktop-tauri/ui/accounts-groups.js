@@ -113,6 +113,32 @@
       usage: false, checkin: false, claim: true, edition: true,
       identifier: 'userId', expiry: 'expiresAt',
     },
+    // CodeArts（华为云 AI 代码助手）。各位各有出处，别照着别家抄：
+    //
+    // `usage: true`：余额是**两份账**（订阅统计 + 福利网关），实现见
+    // `providers::codearts::balance`。界面上「读到 0」与「没读到」必须能分开，
+    // 后端把失败的一侧写进 `statisticsError` / `benefitError` 而不是整次失败。
+    // `welfare: true`：本家没有「每日签到」，它的对应物是 ops 福利领取
+    // （delivery → claim → confirm → **回读二次确认**）。那是用户点一下才走的
+    // 独立按钮，不是签到换了个文案，所以另立一个能力位而不是复用 ZCode 的 `claim`：
+    // 那家的领取要过一次阿里云验证码、且判据看后端给的 `canClaim`（账号得带套餐
+    // 令牌），本家两样都没有 —— 共用一个位会让两边的按钮判据互相污染。
+    // `edition: false`：这一家没有「版本/地区」概念（region 固定在 cn-north-4，
+    // 必须与 token 签发地一致，不是用户可选项；`login_type` 是 WEB/IDE 这类
+    // 登录方式，不是版本，硬塞进 edition 列会让人以为可以切）。
+    // `expiry: 'expiresAt'`：临时凭据约一小时到期，这一列对本家**是主要信息**
+    // （别家显示的是长期登录态的过期时间，这里就是「还有多久要续」）。
+    // 键名与 qoder / accio / zcode 同（毫秒时间戳），由
+    // `codearts_accounts.rs::to_codearts_public_account` 负责写入。
+    codearts: {
+      usage: true, checkin: false, welfare: true, edition: false,
+      identifier: 'userId', expiry: 'expiresAt',
+      // 本家没有「并发不限」这一档：3 是上游硬顶（超过回 HTTP 400，且不降级换号），
+      // 所以 `maxConcurrent = 0` 的含义是「按默认 3」而不是别家的「不做并发过滤」。
+      // 后端同一口径写在两处：公开形态把缺省报成 3（`to_codearts_public_account`）、
+      // 准入闸按 3 判（`session::SessionGate::limit_for`），界面上说了就得对上。
+      concurrencyDefault: 3,
+    },
   };
 
   /**
@@ -312,6 +338,54 @@
   }
 
   /**
+   * 本家有没有「领福利」这个动作。
+   *
+   * 只看能力位，**没有**第二道 `canClaim` 判据：ZCode 那道闸是因为它的账号可能
+   * 只粘了转发用的 accessToken、没有套餐令牌；CodeArts 的领取用的就是账号自己
+   * 那份凭据，能路由就一定能领（真领不了由后端如实报错）。
+   */
+  function supportsWelfare(account) {
+    return Boolean(providerFeatures(providerOf(account)).welfare);
+  }
+
+  /**
+   * 领取台账 → 按钮要用的读数（`{known, today, day, accepted, attempts, confirmed}`）。
+   *
+   * ── 「今天」按北京时间算，不按浏览器本地日 ──────────────────
+   * 后端那条自然日界是 `welfare::today`（UTC+8，中国无夏令时），台账里的 `day`
+   * 就是它写进去的字符串。界面若在别的时区按**本地日**判，会出现两种错：
+   * 北京 0 点前本地已经是新一天 → 把昨天的「已领」显示成今天的（按钮被误置灰），
+   * 反过来则今天的读数被当成昨天（按钮该灰不灰）。所以这里比的是**同一个字符串**，
+   * 而不是两个各自算出来的日期 —— 判据只有一份定义。
+   *
+   * ── 读不懂的台账一律按「今天没有读数」──────────────────────
+   * 缺字段 / 日期不是今天 / 压根没领过，三种情况在这里都是 `today: false`：
+   * 按钮照常可点，由后端如实报错（它那份校验比这里严，见 `ledger_of`）。
+   * 这里**不复制**那份校验逻辑，否则同一件事有两处判据、改一处漏一处。
+   */
+  function welfareStateOf(account) {
+    const day = beijingDay();
+    const empty = { known: false, today: false, day, accepted: false, attempts: 0, confirmed: 0 };
+    const ledger = account?.welfare;
+    if (!ledger || typeof ledger !== 'object' || Array.isArray(ledger)) return empty;
+    const state = {
+      known: true,
+      today: ledger.day === day,
+      day,
+      accepted: Boolean(ledger.accepted),
+      attempts: Number(ledger.attempts) || 0,
+      confirmed: Object.values(ledger.campaigns || {}).filter(item => item?.confirmed).length,
+    };
+    // 昨天的台账与今天无关（后端也是整份重来）
+    return state.today ? state : { ...empty, known: true };
+  }
+
+  /** 北京时间的 `YYYY-MM-DD`（与后端 `welfare::today` 同一个口径） */
+  function beijingDay(millis) {
+    return new Date((millis ?? Date.now()) + 8 * 3600e3).toISOString().slice(0, 10);
+  }
+
+  /**
    * 可参与签到的账号（一键签到只用这批：所属家有签到活动 + 非国际版）。
    *
    * **不看 `enabled`**：禁用只表示「别用它转发」，签到是另一件事 ——
@@ -438,6 +512,9 @@
     accountEdition,
     supportsCheckin,
     supportsClaim,
+    supportsWelfare,
+    welfareStateOf,
+    beijingDay,
     checkedInToday,
     checkinableAccounts,
     // 筛选与队列

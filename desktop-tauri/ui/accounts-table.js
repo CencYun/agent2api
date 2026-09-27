@@ -37,6 +37,8 @@
     supportsUsage,
     supportsCheckin,
     supportsClaim,
+    supportsWelfare,
+    welfareStateOf,
     checkedInToday,
     accountTags,
     editionSuffix,
@@ -691,10 +693,21 @@
         .join(' · ');
       const subscription = subscriptionText(entry.subscription);
       const available = `可用 ${numberText(entry.available)} ${unit}`;
+      // ── 部分失败：一份账读到了、另一份没读到 ────────────────────
+      // CodeArts 的余额是**两台网关**（订阅统计 + 福利网关，见后端
+      // `providers::codearts::balance` 的模块头），后端把失败的一侧写进
+      // `statisticsError` / `benefitError` 而不是整次失败。这时读数是真的、
+      // 但**不完整**：显示成一片绿「可用 —」会被读成「额度用完了」，
+      // 而实际是那半边根本没读到。判据仍然只在 `usageFailureOf` 那一处
+      // （整次失败的入口），这里只补「半次失败」。
+      const missing = [
+        entry.statisticsError ? `订阅统计未读到：${entry.statisticsError}` : '',
+        entry.benefitError ? `福利网关未读到：${entry.benefitError}` : '',
+      ].filter(Boolean);
       return {
-        text: available,
-        kind: 'ok',
-        title: [available, detail, subscription].filter(Boolean).join(' · '),
+        text: available + (missing.length ? ' ⚠' : ''),
+        kind: missing.length ? 'warn' : 'ok',
+        title: [available, detail, subscription, ...missing].filter(Boolean).join(' · '),
       };
     }
     return { text: '无数据', kind: 'muted', title: '未返回可识别的余额数据' };
@@ -790,8 +803,23 @@
       ? `<button data-action="zcode-claim" data-id="${esc(account.id)}"`
         + ` title="探测并领取官方的限时体验套餐（需要过一次人机验证）">领套餐</button>`
       : '';
+    // CodeArts 的「领福利」：与上面那颗「领套餐」是**两件事**（判据位不同、
+    // 流程也不同 —— 本家不要验证码，但领取前有一次只读探测、领取后有一次回读确认）。
+    //
+    // 今天已经到账（台账 `accepted`）时显示「已领」并置灰，与签到那颗同一套语义：
+    // 再点也只是让后端回一句「已领取并确认」，留着可点会让人以为还能再领一次。
+    // **试过但没到账**不置灰 —— 手动点击在后端是绕过限流闸的（那条闸只管自动那一类），
+    // 幂等键按活动存而不是按轮次存，重试不会变成第二笔领取。
+    const welfareTaken = welfareStateOf(account);
+    const welfare = !supportsWelfare(account)
+      ? ''
+      : welfareTaken.today && welfareTaken.accepted
+        ? `<button data-action="codearts-welfare" data-id="${esc(account.id)}" disabled`
+          + ` title="${esc(welfareDoneTitle(welfareTaken))}">已领</button>`
+        : `<button data-action="codearts-welfare" data-id="${esc(account.id)}"`
+          + ` title="${esc(welfareTodoTitle(welfareTaken))}">领福利</button>`;
     const settings = `<button data-action="settings" data-id="${esc(account.id)}" title="备注名 / 启用 / 代理">设置</button>`;
-    return `<td class="cell-actions"><div class="acct-actions">${checkin}${claim}${usage}${settings}`
+    return `<td class="cell-actions"><div class="acct-actions">${checkin}${claim}${welfare}${usage}${settings}`
       + `<button data-action="more" data-id="${esc(account.id)}" title="更多操作">⋯</button></div></td>`;
   }
 
@@ -800,6 +828,27 @@
     const at = Number(account?.checkinAt) || 0;
     const clock = at > 0 ? `今天 ${new Date(at).toTimeString().slice(0, 5)}` : '今天';
     return `${clock} 已签到；签到按自然日重置，明天 0 点后可再签`;
+  }
+
+  /**
+   * 「已领」的悬停说明：说清是哪一天、领到的是哪一份额度，以及什么时候能再领。
+   *
+   * 那句「不增加福利模型的 token 池」是**故意留在这里**的：这一家有两份账，
+   * 领到的积分进的是套餐赠送积分，而用户点完最可能问的下一个问题就是
+   * 「那我的福利模型怎么还是没额度」—— 答案在这颗按钮的悬停里，不必再去
+   * 余额列上猜（后端在 usage 文档的 `note` 里也写了同一条，两处文案同口径）。
+   */
+  function welfareDoneTitle(state) {
+    return `今天（北京时间 ${state.day}）已由官方确认到账 ${state.confirmed} 项；`
+      + '领到的是套餐赠送积分，不增加福利模型的 token 池；按自然日重置，明天可再领';
+  }
+
+  /** 「领福利」的悬停说明：把台账里已有的读数带上，回答「今天第几次了」 */
+  function welfareTodoTitle(state) {
+    const tried = state.today && state.attempts > 0
+      ? `今天（北京时间 ${state.day}）已试过 ${state.attempts} 次但官方尚未确认到账，`
+      : '';
+    return `${tried}探测并领取官方每日登录赠送的套餐积分（到账进套餐积分，不增加福利模型 token 池）`;
   }
 
   // ─── 整行 ──────────────────────────────────

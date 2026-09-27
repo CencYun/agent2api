@@ -328,6 +328,9 @@
     // （登录 / 领取），只有推理站点不同（见 add-zcode.js 的模块头与后端
     // `providers::zcode::region::Region`）。
     ...(window.wbZcodeAddForms || []),
+    // CodeArts（华为云 AI 代码助手）：一家一个 provider，没有地区/额度池之分
+    // （region 写死 cn-north-4，与 token 签发地必须一致）。表单见 add-codearts.js。
+    ...(window.wbCodeArtsAddForms || []),
   ].filter(Boolean);
 
   /** 块 id / input id 的前缀与 provider id 同名，直接复用（少一处要维护的字段） */
@@ -974,6 +977,15 @@
     // `public/logo/icons/256x256.png`，与系统里显示的为同一张）
     zcode: 'assets/providers/zcode.png',
     'zcode-intl': 'assets/providers/zcode.png',
+    // CodeArts（华为云码道）：官方产品图标里的那枚彩虹沙漏 —— 站点自己的
+    // `favicon.ico` 是**华为云通用**的花瓣标，不是这一家的产品标（第一版取错了）。
+    // 真标在营销页引用的 `cloudbu-site/intl/zh-cn/codearts/logo0812.svg`（72×72 矢量）。
+    // 栅格化踩过的两个坑：`qlmanage -t` 出图会**用白底补边并按自己的比例缩放**
+    // （-s 256 只画到 219px，右边和下边各一条白带；-s 512 才是满幅），且圆角外沿
+    // 是白不是透明 —— 而 `.has-icon` 的约定是「四角透明、不留底」（见
+    // css/page-accounts-providers.css）。所以最终这张是：512 栅格化 → 裁掉补边 →
+    // 近白像素转透明 → 缩到 256。深色瓦片 + 彩虹描边里没有白色，这一刀是安全的。
+    codearts: 'assets/providers/codearts.png',
   };
 
   /** 卡片图标：收录过的家出真实图标，其余仍用首字母徽章。
@@ -1324,6 +1336,38 @@
   }
 
   /**
+   * `jsonExpand` 字段：整段是一个 JSON（CodeArts 的凭据就是这么落到用户手上的），
+   * 解析后**逐键并进请求体**，原始那串文本不留。
+   *
+   * ── 为什么在这里解析、而不是把整串塞进一个键交给后端 ──────────
+   * 后端 `POST /api/accounts` 的各家分派读的是**平铺的字段**（`Credential::from_payload`
+   * 认「带外层包装」与「铺平」两种形状，但不认「一个字符串里装着 JSON」）。
+   * 让后端再多一种形状，等于给「添加账号」这条所有家共用的路径加一个只有
+   * 一家会走到的分支；在前端展开，后端收到的就与别家同构。
+   *
+   * ── 为什么要挡在提交之前 ────────────────────────────────────
+   * 粘错的常见形态是「多选了外面的花括号」或「少粘一层」。这些都会在**后端解析
+   * 凭据之后**才暴露，用户看到的是一条来自签名/凭据模块的错误（离「你粘的东西
+   * 不是 JSON」很远）。就地报，错误就是它本来的样子。
+   * 只挡两层：非对象（`"abc"` / `5` / `[]`）与解析失败。
+   */
+  function expandJsonField(field, value, payload) {
+    let parsed;
+    try {
+      parsed = JSON.parse(value);
+    } catch (error) {
+      toast(`${field.label} 不是合法 JSON：${error.message}`, 'err');
+      return false;
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      toast(`${field.label}要粘一个 JSON 对象（形如 {"codearts_provider_credential":{…}}）`, 'err');
+      return false;
+    }
+    for (const [key, item] of Object.entries(parsed)) payload[key] = item;
+    return true;
+  }
+
+  /**
    * 手工填写凭证提交（只有必填项校验；可选字段留空就不进请求体）。
    * 各家的字段名由 ADD_FORMS 的 fields 声明，后端按 provider 分派解析。
    */
@@ -1335,7 +1379,12 @@
     for (const field of config.fields) {
       const value = $(fieldIdOf(config, field)).value.trim();
       if (!field.optional && !value) { toast(`请填写 ${field.label}`, 'err'); return; }
-      if (value) payload[field.key] = value;
+      if (!value) continue;
+      if (field.jsonExpand) {
+        if (!expandJsonField(field, value, payload)) return;
+        continue;
+      }
+      payload[field.key] = value;
     }
     const button = $(`${prefix}-add-button`);
     await runAdd(button, async () => {

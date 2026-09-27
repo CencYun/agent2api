@@ -33,11 +33,25 @@
   /**
    * 打开对话框。当前值从账号公开形态的 `maxConcurrent` 读（后端恒输出数字，
    * 缺省 0 = 不限），输入框预填它 —— 用户看得见「现在是多少」，而不是一个空框。
+   *
+   * ── 「0 = 不限」这一句要按家分岔 ────────────────────────────
+   * CodeArts 的 3 是**上游硬顶**（超过它上游直接回 HTTP 400，且那是账号级冲突、
+   * 不会降级换号），所以那一家把 0 解释成「按默认 3」而不是「不限制」，后端公开
+   * 形态也会把一个没配过的账号报成 3（见 `to_codearts_public_account`）。
+   * 这条知识放在能力表的 `concurrencyDefault` 里（>0 = 本家没有「不限」这一档），
+   * 这里只读不说死 provider id —— 再加一家有同样约束的提供商，改的是能力表。
    */
   function open(account) {
     if (!account?.id) return;
     closeDialog();
     const current = Number(account.maxConcurrent) || 0;
+    const groups = window.wbAccountsGroups;
+    const floor = Number(groups?.providerFeatures?.(groups?.providerOf?.(account))?.concurrencyDefault) || 0;
+    const note = floor > 0
+      ? `该账号同时最多处理的请求数。本家受上游硬顶约束，<b>0 表示按默认 ${floor}</b>，不是不限制。`
+        + '达到上限的账号会跳过，请求转给其他账号；全部账号都达上限时按余量挤占。'
+      : '该账号同时最多处理的请求数，0 表示不限制。达到上限的账号会跳过，请求转给其他账号；'
+        + '全部账号都达上限时按余量挤占。';
     const name = account.nickname || account.name || account.id;
     const mask = document.createElement('div');
     mask.id = MODAL_ID;
@@ -56,7 +70,7 @@
               <label for="acct-conc-input">同时处理的请求数</label>
               <input id="acct-conc-input" type="number" min="0" max="${MAX_LIMIT}" step="1" value="${current}">
             </div>
-            <p>该账号同时最多处理的请求数，0 表示不限制。达到上限的账号会跳过，请求转给其他账号；全部账号都达上限时按余量挤占。</p>
+            <p>${note}</p>
           </div>
         </div>
         <div class="modal-foot">

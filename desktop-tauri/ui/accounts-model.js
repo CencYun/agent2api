@@ -44,6 +44,8 @@
     accountEdition,
     supportsCheckin,
     supportsClaim,
+    supportsWelfare,
+    welfareStateOf,
     checkedInToday,
     checkinableAccounts,
     matchProvider,
@@ -353,6 +355,8 @@
     accountEdition,
     supportsCheckin,
     supportsClaim,
+    supportsWelfare,
+    welfareStateOf,
     checkedInToday,
     checkinableAccounts,
     // 筛选与队列

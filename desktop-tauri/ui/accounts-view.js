@@ -590,6 +590,20 @@
       // 整条流程在 ui/zcode-claim.js 里，这里只负责把账号对象递过去。
       // 按钮在流程期间禁用 —— 一次领取要拖一次滑块，重复点击会开出第二个
       // 验证码流程（共用的求解器一次只允许一个，后发起的那轮会把前一轮作废）。
+      // CodeArts「领福利」（探测 → 确认 → 领取 → 回读）：整条流程在
+      // ui/codearts-welfare.js。与上面那颗按钮同样**全程禁用**：领取是外部服务的
+      // 写操作，重复点击会发两次 claim（幂等键按轮次生成，第二次就是另一笔领取）。
+      if (action === 'codearts-welfare') {
+        const account = accounts().find(item => item.id === id);
+        button.disabled = true;
+        try {
+          await window.wbCodeArtsWelfare?.start?.(account);
+        } finally {
+          button.disabled = false;
+        }
+        return;
+      }
+
       if (action === 'zcode-claim') {
         const account = accounts().find(item => item.id === id);
         button.disabled = true;

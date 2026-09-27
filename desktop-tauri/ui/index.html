@@ -1688,6 +1688,10 @@
   <!-- ZCode「周末套餐」的探测与领取（账号页那一列按钮）。
        依赖 window.wbAccountsView 的列注册与 window.wbAliyunCaptcha。 -->
   <script src="zcode-claim.js"></script>
+  <!-- CodeArts 的「领福利」（探测 → 确认 → 领取 → 回读二次确认）。与上面那颗
+       「领套餐」是两件事，所以另开一个文件与一个能力位（判据互不污染）。
+       位置照 zcode-claim.js 的约定：排在 accounts-view.js 之前，动作分派按名字调它。 -->
+  <script src="codearts-welfare.js"></script>
   <script src="add-account.js"></script>
   <!-- 提供商目录：provider 摘要与「作用提供商」写入的唯一前端入口。
        必须排在所有消费者（accounts-groups / logs-panel）之前 -->
@@ -1773,6 +1777,10 @@
   <!-- Accio 两个地区的表单配置（纯常量，无依赖）。同样必须在 add-provider-forms.js
        之前：后者在加载期读它的表单配置。 -->
   <script src="add-accio.js"></script>
+  <!-- CodeArts 的表单配置（纯常量，无依赖）。同样必须在 add-provider-forms.js
+       之前：后者在加载期读 window.wbCodeArtsAddForms（漏了这行不会报错，症状是
+       「添加账号」弹窗里根本没有 CodeArts 那张卡 —— 见 add-codearts.js 模块头）。 -->
+  <script src="add-codearts.js"></script>
   <!-- ZCode 两个地区的表单配置（纯常量，无依赖）。同样必须在 add-provider-forms.js
        之前：后者在加载期读它的表单配置。 -->
   <script src="add-zcode.js"></script>  <!-- 「从其他工具导入」面板（cc-switch…）。必须在 add-provider-forms.js **之前**：
