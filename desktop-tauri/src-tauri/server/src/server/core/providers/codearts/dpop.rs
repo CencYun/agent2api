@@ -152,7 +152,7 @@ struct Payload<'a> {
 /// 不补就会短一截、被上游判成非法点）。
 fn public_jwk_of(signing: &SigningKey) -> Jwk {
     let verifying: &VerifyingKey = signing.verifying_key();
-    let point = verifying.to_sec1_point(false);
+    let point = verifying.to_encoded_point(false);
     let x = point.x().map(|bytes| bytes.to_vec()).unwrap_or_default();
     let y = point.y().map(|bytes| bytes.to_vec()).unwrap_or_default();
     Jwk {
