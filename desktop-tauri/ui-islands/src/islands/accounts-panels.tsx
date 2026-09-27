@@ -37,13 +37,13 @@ import {
 } from '@ui'
 import { formatTime, shared, type AccountRecord, type UsageEntry } from './accounts-shared'
 import {
-  accountTags, activeLimits, checkedInToday, checkinClock, checkinDoneTitle, displayNameOf,
-  editionSuffix, formatResetText, identifierOf, isDesktopAccount, isEnabled, providerFeatures,
-  providerOf, RESET_UNKNOWN, supportsCheckin, supportsClaim, supportsUsage,
+  accountTags, activeLimits, checkedInToday, checkinDoneTitle,
+  displayNameOf, editionSuffix, formatResetText, identifierOf, isDesktopAccount, isEnabled,
+  providerFeatures, providerOf, RESET_UNKNOWN, supportsCheckin, supportsClaim, supportsUsage,
 } from './accounts-domain'
 import { PRIORITY_MAX, PRIORITY_MIN, priorityOf } from './accounts-columns'
 import {
-  PROXY_CUSTOM_CURRENT, PROXY_CUSTOM_EDIT, applyProxyPick, checkinEntries, clashError, clashSnapshot,
+  PROXY_CUSTOM_CURRENT, PROXY_CUSTOM_EDIT, applyProxyPick, checkinErrorOf, clashError, clashSnapshot,
   commitPriority, connectionsOf, maskName, moveAccount, openSettingsDialog, queryUsageOnce, runCheckin,
   setAccountEnabled, setPanelOpen, startZcodeClaim, toggleNamesHidden, usageEntries, usageFailureOf,
 } from './accounts-data'
@@ -483,6 +483,7 @@ export function ActionsCell({ account, atFront }: { account: AccountRecord; atFr
   const canCheckin = supportsCheckin(account)
   const canUsage = supportsUsage(account)
   const canClaim = supportsClaim(account)
+  const checkinFailed = checkinErrorOf(account.id)
 
   async function claim(): Promise<void> {
     // 一次领取要拖一次滑块，重复点击会开出第二个验证码流程（共用的求解器一次只允许
@@ -501,8 +502,11 @@ export function ActionsCell({ account, atFront }: { account: AccountRecord; atFr
         checkedIn ? (
           <Button variant='outline' size='xs' disabled title={checkinDoneTitle(account)}>已签到</Button>
         ) : (
-          <Button variant='outline' size='xs' title='为该账号签到'
-            onClick={() => { setPanelOpen(account.id, 'checkin', true); void runCheckin(account.id) }}>
+          // 上一次失败的原因挂在这颗按钮的 title 上（toast 几秒就没了，
+          // 而「为什么没签上」要能复看）—— 签到没有明细面板，见 accounts-data.ts
+          <Button variant='outline' size='xs'
+            title={checkinFailed ? `上次签到失败：${checkinFailed}（点此重试）` : '为该账号签到'}
+            onClick={() => void runCheckin(account.id)}>
             签到
           </Button>
         )
@@ -642,102 +646,19 @@ function LimitPanel({ account, onClose, onClear }: {
   )
 }
 
-/**
- * 签到明细面板。分支顺序照抄旧实现：
- * ① 所属家没有签到活动 → ② 国际版 → ③ 还没查过（今天已签过时按钮点不动，
- * 所以那句提示不能再叫用户去点它）→ ④ 签到中 → ⑤ 失败 → ⑥ 结果不可识别 → ⑦ 成功 / 未领取。
- */
-function CheckinPanel({ account, onClose }: { account: AccountRecord; onClose: () => void }) {
-  const entry = checkinEntries().get(account.id)
-  const close = (
-    <Button variant='ghost' size='icon-xs' className='panel-close' title='收起' onClick={onClose}>✕</Button>
-  )
-  if (!providerFeatures(providerOf(account)).checkin) {
-    return <div className='row-panel'>该提供商没有签到活动，此账号不参与签到。{close}</div>
-  }
-  if (!supportsCheckin(account)) {
-    return <div className='row-panel'>国际版暂无签到活动，该账号不参与签到。{close}</div>
-  }
-  if (entry === undefined) {
-    if (checkedInToday(account)) {
-      const clock = checkinClock(account)
-      return (
-        <div className='row-panel'>
-          <Badge variant='success' shape='tag'>✅ 今天已签到</Badge>
-          {clock ? <span>{clock}</span> : null}
-          <span>签到按自然日重置，明天 0 点后可再签</span>{close}
-        </div>
-      )
-    }
-    return <div className='row-panel'>签到状态未查询，请点击该行的「签到」按钮。{close}</div>
-  }
-  if (entry === null) {
-    return <div className='row-panel'><Badge variant='warning' shape='tag'>正在签到…</Badge>{close}</div>
-  }
-  if (typeof entry === 'string') {
-    return (
-      <div className='row-panel error'>
-        <Badge variant='destructive' shape='tag'>签到失败</Badge> {entry}{close}
-      </div>
-    )
-  }
-  if (!entry || entry.success === undefined) {
-    return <div className='row-panel'>未获取到签到结果{close}</div>
-  }
-  if (entry.success) {
-    const data = entry.data || {}
-    // 积分字段两家口径不同：WorkBuddy 在 `data.points`（计费接口的嵌套结构），
-    // 小浣熊与 AutoClaw 在顶层 `rewardPoints`。两个都认 —— 只认前者会让后两家的
-    // 「+N 积分」凭空消失，用户看不到签到到底领到了什么
-    const points = Number(data.points)
-    const reward = Number.isFinite(points) ? points : Number(entry.rewardPoints)
-    const continuous = Number(data.continuousDays)
-    const totalDays = Number(data.totalDays)
-    return (
-      <div className='row-panel'>
-        <Badge variant='success' shape='tag'>✅ 签到成功</Badge>
-        {Number.isFinite(reward) && reward ? <span>本次 +{reward} 积分</span> : null}
-        {Number.isFinite(continuous) ? <span>连续 {continuous} 天</span> : null}
-        {Number.isFinite(totalDays) ? <span>累计 {totalDays} 天</span> : null}
-        {close}
-      </div>
-    )
-  }
-  // 未领取：`code` 只有 WorkBuddy 的 claim 带（上游业务码）；另两家的 claim 不带它，
-  // 此时只显示 msg，不要露出一个 `code=?`
-  return (
-    <div className='row-panel'>
-      <Badge variant='warning' shape='tag'>{entry.msg || '未领取'}</Badge>
-      {entry.code === undefined ? null : <span>code={String(entry.code)}</span>}
-      {close}
-    </div>
-  )
-}
-
-/**
- * 展开的明细行（限流 / 签到）。挂在账号行**之后**的独立 `<tr>` 上而不是塞进某个单元格：
- * 明细是整宽内容，放进单元格会被那一列的宽度锁死。colspan 取**当前可见列数** ——
- * 列设置里藏起几列之后仍按全列铺开，会让这一行比表体宽出一截（顶出横向滚动）。
- */
-export function PanelsRow({ account, colSpan, limitsOpen, checkinOpen, onClear }: {
+export function PanelsRow({ account, colSpan, limitsOpen, onClear }: {
   account: AccountRecord
   colSpan: number
   /** 展开态由页面从 store 读出来传进来（这一层只负责画） */
   limitsOpen: boolean
-  checkinOpen: boolean
   onClear: (id: string, model: string) => void
 }) {
-  if (!limitsOpen && !checkinOpen) return null
+  if (!limitsOpen) return null
   return (
     <tr className='acct-panels' data-panels-for={account.id}>
       <td colSpan={colSpan}>
-        {limitsOpen ? (
-          <LimitPanel account={account} onClose={() => setPanelOpen(account.id, 'limits', false)}
-            onClear={model => onClear(account.id, model)} />
-        ) : null}
-        {checkinOpen ? (
-          <CheckinPanel account={account} onClose={() => setPanelOpen(account.id, 'checkin', false)} />
-        ) : null}
+        <LimitPanel account={account} onClose={() => setPanelOpen(account.id, 'limits', false)}
+          onClear={model => onClear(account.id, model)} />
       </td>
     </tr>
   )

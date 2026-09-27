@@ -122,6 +122,46 @@ pub const EXCHANGE_PATH: &str = "/api/v1/jobToken/exchange";
 pub const USER_INFO_PATH: &str = "/api/v1/userinfo";
 pub const USAGE_PATH: &str = "/api/v2/quota/usage";
 
+/// 套餐查询（`GET`，返回 `plan_tier_name` 等）。与额度接口同在 openapi 主机上，
+/// 用同一套头；余额面板的「套餐 Pro Trial」一行就来自这里。
+pub const PLAN_PATH: &str = "/api/v2/user/plan";
+
+/// 活动/签到接口（`sash` 一族）的路径前缀。
+///
+/// **与 openapi 同主机、但鉴权口径完全不同**：只要一个 `Bearer <dt->` 加
+/// `cosy-clienttype: 10`，**不打 COSY 签名**（见 [`sash_headers`]）。
+/// 每日签到的领取走 `GET {CAMPAIGNS_PATH}` 找 `actionType == "CLAIM_BENEFIT"`
+/// 的活动、再 `POST {CAMPAIGNS_PATH}/{campaignId}/claim` 领取 —— 详情与证据见
+/// `checkin.rs` 的模块头。
+pub const CAMPAIGNS_PATH: &str = "/sash/api/v1/me/campaigns";
+/// 活动列表的查询串：`forceRefresh=true` 让上游跳过缓存给实时的 `claimStatus`。
+pub const CAMPAIGNS_QUERY: &str = "?forceRefresh=true";
+
+/// `cosy-clienttype` 的值：桌面端（QoderWork）形态。
+///
+/// **这个头在门控返回内容**，不是可有可无的装饰：实测同一个账号
+/// （中国版，2026-09-27）用 `Cosy-ClientType: 5`（IDE 形态）打活动接口，
+/// 上游返回 `showCampaign:false` + 空活动列表；换成 `10` 才给出完整活动包
+/// （含可领取的签到活动）。参考实现（CLIProxyAPI 的 qoder2api 插件、
+/// CPA 的 qoder 插件）都用 10。
+pub const SASH_CLIENT_TYPE: &str = "10";
+
+/// `user-agent`：抓包确认的客户端标识（参考实现同值）
+pub const SASH_USER_AGENT: &str = "Qoder";
+
+/// 活动/签到接口的请求头：**最小束、无签名**。
+///
+/// 小写头名是照抄抓包结果（HTTP 头名大小写不敏感，但保持一致便于对拍）。
+pub fn sash_headers(token: &str) -> Vec<(String, String)> {
+    vec![
+        ("authorization".to_string(), format!("Bearer {token}")),
+        ("cosy-clienttype".to_string(), SASH_CLIENT_TYPE.to_string()),
+        ("accept".to_string(), "application/json".to_string()),
+        ("accept-language".to_string(), "zh-CN".to_string()),
+        ("user-agent".to_string(), SASH_USER_AGENT.to_string()),
+    ]
+}
+
 /// 设备流凭据（`dt-` / `drt-`）的续期端点，挂在 [`Region::open_api`] 上。
 ///
 /// ── 为什么不是 `{center}/algo/api/v3/user/refresh_token` ──────────

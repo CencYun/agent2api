@@ -617,8 +617,6 @@
   font-size: 11.5px;
 }
 
-.acct-panels .row-panel.error { border-color: var(--danger-bd); background: var(--danger-soft); color: var(--danger); }
-
 /* 「收起」按钮固定到右上角（面板是 flex 容器，跟着内容排会被挤到文字后面） */
 .acct-panels .row-panel .panel-close {
   position: absolute;
