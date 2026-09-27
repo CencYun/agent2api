@@ -67,16 +67,27 @@ function DialogOverlay({ className, ...props }: DialogPrimitive.Backdrop.Props) 
 type DialogContentProps = DialogPrimitive.Popup.Props & {
   /** 是否自带右上角关闭按钮，默认 true */
   showCloseButton?: boolean
+  /**
+   * 关闭后是否把 Portal 留在 DOM 里（内容保留、只是隐藏），默认 false（关闭即卸载）。
+   *
+   * 需要它的场景：弹窗里挂着一份**有状态的第三方 DOM**（比如登录引擎建的容器，
+   * 里面有它自己持有的 deviceId、发码冷却）。关闭即卸载会把这些一起清掉，
+   * 用户「发码 → 关掉 → 重新打开 → 填码」就会拿到一个已经作废的 deviceId。
+   * 打开这一档，内容留着、状态就还在（Base UI 会把隐藏时的内容标记为 inert，
+   * 键盘与读屏不会跑进去）。
+   */
+  keepMounted?: boolean
 }
 
 function DialogContent({
   className,
   children,
   showCloseButton = true,
+  keepMounted = false,
   ...props
 }: DialogContentProps) {
   return (
-    <DialogPortal>
+    <DialogPortal keepMounted={keepMounted}>
       <DialogOverlay />
       <DialogPrimitive.Popup
         data-slot='dialog-content'
