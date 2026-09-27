@@ -49,6 +49,20 @@
   }
 }
 
+@layer utilities {
+  /* hidden 属性 = 显式隐藏，必须压过组件自身的 display。
+     消费方 ui/css/tokens.css 里那条 [hidden] 压不住本层的工具类：那份文档没分层，
+     而重要声明的层序是倒过来的 —— 分层里的 !important 反压未分层的 !important。
+     所以这条写在工具层里，靠两个属性选择器（0,2,0）胜过 .flex / .inline-flex（0,1,0），
+     与顺序无关。两个来源都靠它兜底：
+       · Base UI 自己：keepMounted 的弹窗收起、浮层 Positioner 关闭时打的就是 hidden；
+       · 界面代码：节点必须常驻（状态在闭包 / DOM 里）、只按状态切显隐的那些段与按钮
+         —— 行内 style 与单类名都压不过 !important 工具类，属性式才稳。 */
+  [hidden][hidden] {
+    display: none !important;
+  }
+}
+
 /* 组件库自己的源码：类名都写在 src 下的 tsx 里，必须显式声明才会生成。
    路径相对本文件（ui-kit/styles/ → ui-kit/src）。 */
 @source '../src';

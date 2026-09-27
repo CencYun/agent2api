@@ -7,14 +7,18 @@
  *
  * ── 与旧实现的一处结构差异（刻意的）──────────────────────────
  * 旧实现把「添加方式」做成互斥显隐的分段，但**所有段落始终在 DOM 里**（只切
- * display），因为三个登录引擎都把状态放在自己的闭包里、事件也按 id 绑在那些
+ * 显隐），因为三个登录引擎都把状态放在自己的闭包里、事件也按 id 绑在那些
  * 节点上（sms-login.js 在 create() 时 addEventListener）。岛上沿用同一手法：
- * 每家的块整块常驻（只有当前选中那家的块可见），块内各段落也只切 display。
+ * 每家的块整块常驻（只有当前选中那家的块可见），块内各段落也只切显隐。
  * 于是「发码 → 切去别的方式 → 切回来 → 提交」时 deviceId 仍在，行为与旧实现一致。
+ *
+ * 显隐一律切 `hidden` 属性，**不是**行内 `display:none`：这些节点都是组件库的
+ * DialogSection / Button，自带带 `!important` 的 `flex` / `inline-flex` 工具类，
+ * 行内样式与单类名都压不过它（兜底规则见组件库 globals.css 的 `[hidden][hidden]`）。
  *
  * ── 引擎的容器契约（一个字都不能改）──────────────────────────
  *   web-login.js：按 id 找按钮 / 取消 / 提示三个节点，自己写 disabled / innerHTML /
- *                style.display —— 这三个节点的 id 与旧实现逐字一致，
+ *                hidden —— 这三个节点的 id 与旧实现逐字一致，
  *                且**文本子节点是常量**（React 不会去覆盖引擎写进去的内容）。
  *   sms-login.js：create() 时按 id 绑 click，之后按 id 现读输入框的 .value ——
  *                六个 id 逐字一致，输入框是非受控的（React 从不写回 value）。
@@ -96,11 +100,6 @@ function Note({ html, text }: { html?: string; text?: string }): React.ReactElem
   return <p>{text || ''}</p>
 }
 
-/** 段落显隐：所有段落常驻 DOM（理由见文件头），只切 display */
-function sectionStyle(visible: boolean): React.CSSProperties {
-  return visible ? {} : { display: 'none' }
-}
-
 /* ─── 手填字段 ─────────────────────────────── */
 
 function ManualSection({
@@ -144,7 +143,7 @@ function ManualSection({
 
   return (
     <DialogSection
-      style={sectionStyle(visible)}
+      hidden={!visible}
       // 小浣熊那条「登录态文件」链接：旧实现是 document 上的委托，这里收在段落上
       onClick={event => {
         if ((event.target as HTMLElement).closest('[data-raccoon-hint]')) {
@@ -218,7 +217,7 @@ function DesktopSection({
   }
 
   return (
-    <DialogSection style={sectionStyle(visible)}>
+    <DialogSection hidden={!visible}>
       <h3>从本机导入桌面端登录态</h3>
       <p>{config.desktopNote}</p>
       <div className='field-row'>
@@ -296,7 +295,7 @@ function WebLoginSection({
 
   if (!web) return null
   return (
-    <DialogSection style={sectionStyle(visible)}>
+    <DialogSection hidden={!visible}>
       <h3>网页登录</h3>
       <Note html={web.noteHtml} />
       {web.modes?.length ? (
@@ -315,10 +314,13 @@ function WebLoginSection({
         <Button id={`${prefix}-web-button`} onClick={() => controllerRef.current?.start()}>
           {web.button}
         </Button>
+        {/* 收起时靠 hidden 属性（不是行内 display）：引擎在 waiting 与空闲之间
+            切的就是它（见 web-login.js 的 applyState）。按钮是组件库的 Button，
+            inline-flex 工具类带 !important，行内样式压不过 */}
         <Button
           id={`${prefix}-web-cancel`}
           variant='outline'
-          style={{ display: 'none' }}
+          hidden
           onClick={() => controllerRef.current?.cancel()}
         >
           取消等待
@@ -354,7 +356,7 @@ function SmsSection({
 
   if (!sms) return null
   return (
-    <DialogSection style={sectionStyle(visible)}>
+    <DialogSection hidden={!visible}>
       <h3>手机验证码登录</h3>
       <Note
         html={sms.noteHtml}
@@ -444,7 +446,7 @@ function OauthSection({
 
   if (!oauth) return null
   return (
-    <DialogSection style={sectionStyle(visible)}>
+    <DialogSection hidden={!visible}>
       <h3>{oauth.title || '网页登录'}</h3>
       <Note html={oauth.noteHtml} />
       {oauth.modes?.length ? (
@@ -464,7 +466,8 @@ function OauthSection({
             click（旧实现同一分工），这里再绑一次会让 start() 被调两遍 */}
         <Button id={`${prefix}-oauth-zai`}>使用 Zai 账号登录</Button>
         <Button id={`${prefix}-oauth-google`} variant='outline'>使用 Google 账号登录</Button>
-        <Button id={`${prefix}-oauth-cancel`} variant='outline' style={{ display: 'none' }}>
+        {/* 取消按钮的显隐由 autoclaw-oauth.js 的 paintCancel 管（同样是 hidden 属性） */}
+        <Button id={`${prefix}-oauth-cancel`} variant='outline' hidden>
           取消
         </Button>
       </div>
@@ -505,7 +508,7 @@ export function ProviderBlock({
   )
 
   return (
-    <div className='add-provider-block' style={sectionStyle(active)}>
+    <div className='add-provider-block' hidden={!active}>
       {config.regionOptions?.length ? (
         <DialogSection>
           <h3>地区</h3>
@@ -639,7 +642,7 @@ export function WorkBuddyBlock({ active }: { active: boolean }): React.ReactElem
       : '只有「内嵌窗口」能恢复第三方入口：系统浏览器里我们无法改动登录页'
 
   return (
-    <div className='add-provider-block' style={sectionStyle(active)}>
+    <div className='add-provider-block' hidden={!active}>
       <DialogSection>
         <h3>账号版本</h3>
         <p>两版账号可同时保存，按账号自动路由。</p>
@@ -692,7 +695,7 @@ export function WorkBuddyBlock({ active }: { active: boolean }): React.ReactElem
           <Button
             id='web-login-cancel'
             variant='outline'
-            style={{ display: 'none' }}
+            hidden
             onClick={() => controllerRef.current?.cancel()}
           >
             取消等待
