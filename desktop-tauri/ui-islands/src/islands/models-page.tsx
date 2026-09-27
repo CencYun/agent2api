@@ -1,13 +1,15 @@
 /**
- * Agent2API · 模型管理页（左栏提供商导航 + 模型表 + 映射弹窗 + 添加模型弹窗）—— React 岛。
+ * Agent2API · 模型管理页（左栏提供商导航 + 模型表 + 三个弹窗）—— React 岛。
  *
  * 替换 ui/models-panel.js + ui/models-reasoning.js + ui/models-custom-source.js 三个文件。
  * 对外接口与原实现**完全一致**（见 models-panel-state.ts 末尾的 window.wbModelsPanel）：
  * app.js:142 refreshAll() / app.js:570 render() / table-columns.js:74 visibleColumns() /
  * models-fetch-modal.tsx:274 builtinProviders() 与 :646 providerRefreshedAt()。
  *
- * 本文件只放**视图层**（页面骨架 + 左栏 + 模型表 + 两个弹窗 + 挂载）；数据层（快照 store /
- * 取数 / 写入 / 对外契约）在 models-panel-state.ts —— 那个文件不是岛（.ts，不被 glob 加载）。
+ * 本文件只放**视图层**（页面骨架 + 左栏 + 模型表 + 映射 / 添加模型两个弹窗 + 挂载）；
+ * 数据层（快照 store / 取数 / 写入 / 对外契约）在 models-panel-state.ts —— 那个文件不是岛
+ * （.ts，不被 glob 加载）；「模型能力」弹窗自带一个文件（model-capability-dialog.tsx，它只
+ * 依赖数据层，不依赖本文件）。
  *
  * ── 一个页面，两种数据源 ──────────────────────────────
  * 左栏（`.prov-rail`）是提供商导航：**内置提供商**一组（「全部」= 各家的聚合视图，各家是
@@ -35,8 +37,8 @@
  * `<th>` 里插着列宽把手，重建会把两者一起丢掉。
  *
  * 所以表骨架（colgroup + thead）在这里是**字面量 JSX**，永远按 index.html 的原始顺序渲染
- * 全部 5 列，且**不随任何状态变化**：
- *   · React 只在「同一位置、同一类型的子节点」上做属性 diff —— 这 5 个 th 的 props 与文本
+ * 全部 7 列，且**不随任何状态变化**：
+ *   · React 只在「同一位置、同一类型的子节点」上做属性 diff —— 这 7 个 th 的 props 与文本
  *     逐字不变，重渲染时 React 一次 DOM 写都不会发生，syncStaticHead 摘掉的列不会被 React
  *     塞回来（它压根不重新协调这几个节点）；
  *   · 隐藏列的元素在 syncStaticHead 的缓存里（按表 id 记住），切回内置家时放得回去；
@@ -47,7 +49,8 @@
  * 换组件库：左栏导航项（NavItem）、面板头两颗按钮、状态筛选（SegmentedControl）、搜索框
  * （InputGroup）、chip 上的映射开关（Switch size='sm'）、chip 上的等级标与删除 ×（Button 的
  * 2xs / icon-2xs 档）、「＋ 映射」（Button variant='dashed'）、模型 ID 的复制按钮、展开/收起、
- * 行内「移除」、来源徽标（Badge）、两个弹窗整块（Dialog 一族 + Input / Select / Label / Tooltip）。
+ * 行内「移除」、来源徽标（Badge）、三个弹窗整块（Dialog 一族 + Input / Select / Label / Tooltip；
+ * 「模型能力」在 model-capability-dialog.tsx，能力位两列的单元格样式在 page-gateway.css）。
  * 保留旧实现的两处都不是控件本身：
  *   · 自定义家条目外层的 `.pv-row` 定位容器与那颗 `.pv-del` —— HTML 不允许 button 嵌套，
  *     删除 × 必须与 NavItem 做兄弟节点，靠 .pv-row 定位（见 rail 里的说明）；
@@ -88,15 +91,21 @@ import {
   TooltipTrigger,
   cn,
 } from '@ui'
+import { TableFooter, useClientPaging } from './table-shell'
+import {
+  BOOLEAN_KEYS, CAPABILITY_SHORT, capabilitiesOf, capabilityState, capabilityTip,
+  exactTokens, formatTokens, normalizeOverrides,
+} from './model-capability'
+import { CapabilityDialog } from './model-capability-dialog'
 import { CUSTOM_LEVEL, levels as reasoningLevels } from './models-reasoning'
 import * as customSource from './models-custom-source'
 import type { ManageModel, ManageView } from './models-custom-source'
 import {
   GROUP_LIMIT, MODEL_STATE_OPTIONS, accept, bindingKeyOf, bindingsOf, builtinRailItems,
-  closeCustomModel, closeMapping, collapseGroup, currentProvider, customProviderOptions,
+  closeCapability, closeCustomModel, closeMapping, collapseGroup, currentProvider, customProviderOptions,
   directoryReady, esc, errorMessage, expandGroup, formatTime, getSnapshot, levelOf, load, models,
-  openAddCustomProvider, openCustomModel, openMapping, providerOptions, refreshAll, refreshModels,
-  registerColumnSettings, removeCustomProvider, render, resolveProvider, restoreSavedFilters,
+  openAddCustomProvider, openCapability, openCustomModel, openMapping, providerOptions, refreshAll,
+  refreshModels, registerColumnSettings, removeCustomProvider, render, resolveProvider, restoreSavedFilters,
   rowEnabled, rowKeyOf, runRowAction, same, selectProvider, setSearch, setStateFilter, setTableEl,
   shared, subscribe, syncHead, toast, upstreamOptions, viewData, visibleColumns, writeAddModel,
   writeBinding, writeRemoveMapping, writeRemoveModel,
@@ -166,6 +175,14 @@ function ModelsPage() {
   const shown = all.filter(model => matches(model, keyword, provider, state.stateFilter))
   const columns = visibleColumns()
   const columnCount = columns.length
+  /**
+   * 客户端分页（通用表格外壳）：一家的模型可能上百条，全渲染既慢又难扫。
+   *
+   * 默认 50 条/页。分页档位下**关掉组内折叠**（「展开其余 N 个」）：页数已经把
+   * 长度限住了，两套折叠并存时读数会互相打架（标题写「Qoder 120 个模型」，页面上
+   * 却只有 8 行）。选「全部」这一档时恢复原来的折叠行为，一个字都不变。
+   */
+  const paging = useClientPaging(shown.length, 'models')
 
   /** 左栏：内置提供商（全部 + 各家）+ 自定义提供商（每家 + 新建） */
   function rail() {
@@ -273,7 +290,10 @@ function ModelsPage() {
                 next ? '映射已启用' : '映射已关闭',
               )
             }} />
-          <span className='t' title={alias}>{alias}</span>
+          {/* 名字本身就是复制入口（data-copy 走 clipboard.js 的全局委托，点一下
+              toast「已复制」）；title 同时承担两件事 —— 提示可点、长名字被
+              ellipsis 截断时悬停能看全 */}
+          <span className='t' data-copy={alias} title={`点击复制：${alias}`}>{alias}</span>
           {binding.isDefault ? <span className='binding-default'>默认</span> : null}
           {levelBadge(alias, model.id, providerId, busy)}
           {binding.isDefault ? null : (
@@ -317,6 +337,63 @@ function ModelsPage() {
   }
 
   /**
+   * 「上下文 / 输出」列：两个 token 数合在一格（上下文 / 最大输出）。
+   *
+   * 展示的是**生效值**（清单原值 + 覆盖，归一后读）；被覆盖过的那一项挂一枚
+   * 小点（`.cap-mark`，title 说明），未声明的显示 `—`。整格是一个按钮：
+   * 点它打开能力弹窗（两列入口同一个 —— 能力是一个整体，没必要各开一个）。
+   */
+  function budgetCell(model: ManageModel) {
+    const caps = capabilitiesOf(model)
+    const overrides = normalizeOverrides(model.capOverrides)
+    const input = typeof caps.maxInputTokens === 'number' ? caps.maxInputTokens : null
+    const output = typeof caps.maxOutputTokens === 'number' ? caps.maxOutputTokens : null
+    const hint = `上下文窗口 ${exactTokens(input)} / 最大输出 Token ${exactTokens(output)} —— 点击修改模型能力`
+    return (
+      <button type='button' className='caps-open' title={hint}
+        onClick={() => openCapability(model.provider || '', model.id)}>
+        <span className={cn('cap-num', input === null && 'unset')}>
+          {formatTokens(input)}
+          {overrides.includes('maxInputTokens') ? <i className='cap-mark' title='已覆盖上游值' /> : null}
+        </span>
+        <span className='cap-sep'>/</span>
+        <span className={cn('cap-num', output === null && 'unset')}>
+          {formatTokens(output)}
+          {overrides.includes('maxOutputTokens') ? <i className='cap-mark' title='已覆盖上游值' /> : null}
+        </span>
+      </button>
+    )
+  }
+
+  /**
+   * 「能力」列：三枚布尔徽章（工具 / 图片 / 思考），三态各有一副样式 ——
+   * 支持（实心）/ 明确不支持（压淡）/ 未声明（虚线）。悬停出完整文案
+   * （`capabilityTip` 会写明「上游未声明时下游按不支持处理」这类事实）。
+   */
+  function capsCell(model: ManageModel) {
+    const caps = capabilitiesOf(model)
+    const overrides = normalizeOverrides(model.capOverrides)
+    return (
+      <button type='button' className='caps-open caps-badges'
+        title='对下游声明的能力（工具调用 / 图片识别 / 支持思考）—— 点击修改'
+        onClick={() => openCapability(model.provider || '', model.id)}>
+        {BOOLEAN_KEYS.map(key => {
+          const value = caps[key] ?? null
+          const state = capabilityState(value)
+          const overridden = overrides.includes(key)
+          return (
+            <span key={key} className={cn('cap-badge', state, overridden && 'marked')}
+              title={capabilityTip(key, value, overridden)}>
+              {CAPABILITY_SHORT[key]}
+              {overridden ? <i className='cap-mark' /> : null}
+            </span>
+          )
+        })}
+      </button>
+    )
+  }
+
+  /**
    * 各列的单元格（不含对齐类）。放在一个 switch 里而不是行内联的三元链，是为了让「某一列长
    * 什么样」只有一处实现 —— 列设置重排时才不会各画一个样。
    *
@@ -348,11 +425,12 @@ function ModelsPage() {
       case 'model':
         return (
           <td className={cellClass('cell-model', column.align)}>
+            {/* 名字本身就是复制入口（data-copy 走 clipboard.js 的全局委托，点一下
+                toast「已复制」）；title 同时承担两件事 —— 提示可点、长 ID 被
+                ellipsis 截断时悬停能看全。曾经这里另挂一颗 ⧉ 小按钮，已去掉：
+                点名字更省事，也少一个悬停才显形的控件 */}
             <div className='mid'>
-              <span className='t'>{model.id}</span>
-              {/* data-copy 是 clipboard.js 的全局委托钩子（复制按钮统一入口） */}
-              <Button variant='ghost' size='xs' className='cp' data-copy={model.id}
-                title='复制模型 ID'>⧉</Button>
+              <span className='t' data-copy={model.id} title={`点击复制：${model.id}`}>{model.id}</span>
             </div>
             {model.name && model.name !== model.id ? <div className='mname'>{model.name}</div> : null}
           </td>
@@ -365,6 +443,10 @@ function ModelsPage() {
         )
       case 'source':
         return <td className={cellClass('cell-source', column.align)}>{sourceCell(model)}</td>
+      case 'budget':
+        return <td className={cellClass('cell-budget', column.align)}>{budgetCell(model)}</td>
+      case 'caps':
+        return <td className={cellClass('cell-caps', column.align)}>{capsCell(model)}</td>
       case 'alias':
         return <td className={cellClass('cell-alias', column.align)}>{aliasCell(model)}</td>
       case 'act':
@@ -416,7 +498,9 @@ function ModelsPage() {
     }
     // 分组带只在「全部」视图里出现：选中单家时标题已经写了是哪一家，再叠一条是重复的
     const showGroups = provider === 'all'
-    const collapsible = showGroups && !keyword && state.stateFilter === 'all'
+    // 分页档位下**不做组内折叠**（见 paging 的说明）：页数本身就把长度限住了，
+    // 两套折叠叠在一起会让人算不清「到底还有多少个」。选「全部」时保持原行为。
+    const collapsible = showGroups && !keyword && state.stateFilter === 'all' && !paging.paged
     const groups = new Map<string, { label: string; items: ManageModel[] }>()
     for (const model of shown) {
       const key = model.provider || ''
@@ -424,6 +508,8 @@ function ModelsPage() {
       groups.get(key)?.items.push(model)
     }
     const rows: React.ReactNode[] = []
+    /** 全局「模型行」序号：分页区间按**模型行**算，组标题与「更多」行不占号 */
+    let rowIndex = 0
     for (const [key, group] of groups) {
       // 组内排序：禁用的行沉到该组末尾，启用的排前面；Array#sort 稳定，组内仍按后端原序
       //（判定与「已启用 / 已禁用」筛选同一份，见 rowEnabled）
@@ -431,16 +517,23 @@ function ModelsPage() {
       const open = state.expanded.has(key) || !collapsible
       const items = open ? group.items : group.items.slice(0, GROUP_LIMIT)
       const rest = group.items.length - items.length
-      if (showGroups) {
+      // 本组落在当前页里的那一段（分页关掉时就是全部）
+      const from = paging.paged ? Math.max(0, paging.rangeStart - 1 - rowIndex) : 0
+      const to = paging.paged ? Math.min(items.length, paging.rangeEnd - rowIndex) : items.length
+      const onPage = from < to ? items.slice(from, to) : []
+      // 组标题：本组在这一页上有行才渲染。跨页续上的那一组缀「（续）」—— 否则读者会
+      // 以为这一组只有当前页这几个（标题上的总数仍是**整组**的，不是这一页的）
+      if (showGroups && onPage.length) {
         rows.push(
           <tr className='tr-group' key={`group:${key}`}>
             <td colSpan={columnCount}>
-              <span className='prov-tag'>{group.label}</span>{group.items.length} 个模型
+              <span className='prov-tag'>{group.label}</span>{from > 0 ? '（续）' : ''}{group.items.length} 个模型
             </td>
           </tr>,
         )
       }
-      for (const model of items) rows.push(modelRow(model))
+      for (const model of onPage) rows.push(modelRow(model))
+      rowIndex += items.length
       if (rest > 0) {
         rows.push(
           <tr className='tr-more' key={`more:${key}`}>
@@ -506,6 +599,8 @@ function ModelsPage() {
                   <col className='c-model' data-col='model' />
                   <col className='c-rate' data-col='rate' />
                   <col className='c-source' data-col='source' />
+                  <col className='c-budget' data-col='budget' />
+                  <col className='c-caps' data-col='caps' />
                   <col className='c-alias' data-col='alias' />
                   <col className='c-act' data-col='act' />
                 </colgroup>
@@ -513,18 +608,30 @@ function ModelsPage() {
                   <th data-col='model'>上游模型</th>
                   <th data-col='rate'>倍率</th>
                   <th data-col='source'>来源</th>
+                  <th data-col='budget'>上下文 / 输出</th>
+                  <th data-col='caps'>能力</th>
                   <th data-col='alias'>模型映射（原始 ID 与别名独立开关）</th>
                   <th className='r' data-col='act'>操作</th>
                 </tr></thead>
                 <tbody id='models'>{body()}</tbody>
               </table>
             </div>
-            {/* 表尾说明：内容随选中的提供商换（内置家 / 自定义家两种口径） */}
-            <div className='panel-foot' id='models-panel-foot'>
-              {custom
+            {/* 表尾：读数 / 每页条数 / 跳页 / 翻页器由通用表格外壳（table-shell.tsx）统一渲染。
+                左侧说明只剩「自定义家」那一条（内置家原先那句按用户要求移除）；其余四张表
+                的页脚说明也都去掉了，页脚现在是清一色的控制条 */}
+            <TableFooter
+              className='models-panel-foot'
+              leading={custom
                 ? <>自定义提供商的清单<b>只属于这一家</b>：这里的模型不会出现在其他家，别名也只在这一家内生效。改名称 / 协议 / Base URL 在账号页该家账号的「设置」→ 提供商一栏；整家不要了，鼠标移到左栏这家上点 × 删除（连同名下账号）。</>
-                : <>「默认」绑定就是原始模型 ID，只可开关、不可删除。原始 ID 与每个别名独立生效：关闭的名称不出现在 <code>/v1/models</code>，下游请求返回 404；其他开启的名称不受影响。</>}
-            </div>
+                : undefined}
+              total={shown.length}
+              range={paging.paged ? { start: paging.rangeStart, end: paging.rangeEnd } : null}
+              page={paging.page}
+              pageCount={paging.pageCount}
+              size={paging.size}
+              onSizeChange={paging.setSize}
+              onPageChange={paging.goto}
+            />
           </div>
         </div>
       </section>
@@ -532,6 +639,9 @@ function ModelsPage() {
       {state.mapping ? <MappingDialog context={state.mapping} onClose={closeMapping} /> : null}
       {state.customModel
         ? <CustomModelDialog initial={state.customModel} onClose={closeCustomModel} />
+        : null}
+      {state.capability
+        ? <CapabilityDialog context={state.capability} onClose={closeCapability} />
         : null}
     </>
   )

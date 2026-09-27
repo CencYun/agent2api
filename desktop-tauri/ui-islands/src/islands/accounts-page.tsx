@@ -59,6 +59,7 @@ import {
   SegmentedControl,
   cn,
 } from '@ui'
+import { TableFooter, useClientPaging } from './table-shell'
 import { shared, type AccountRecord, type ColSettingsHandle } from './accounts-shared'
 import { checkinableAccounts, isDesktopAccount, isEnabled, supportsUsage } from './accounts-domain'
 import { ACCOUNT_COLUMNS, bindColumnGrips, columnWidths } from './accounts-columns'
@@ -140,6 +141,16 @@ function AccountsPage() {
   const visible = visibleList()
   const seatMap = seats()
   const columns = visibleColumns()
+  /**
+   * 客户端分页（通用表格外壳）：账号是**全局优先级队列**，行序本身就是数据，
+   * 所以默认给「全部」这一档 —— 想分页的用户可以在页脚自己换档位。
+   *
+   * 勾选按 id 存在 store 里，翻页不会丢选择；但「批量操作」作用于**全部已勾选**
+   * 的账号（含被分页挡在别的页上的），这一点与「被筛选隐藏的也参与操作」同一口径，
+   * 页脚的读数只描述当前页。
+   */
+  const paging = useClientPaging(visible.length, 'accounts', { defaultSize: 'all' })
+  const pageRows = paging.paged ? paging.slice(visible) : visible
 
   // 归一化与自愈都放在 effect 里（渲染期改状态会与 React 的渲染顺序打架）：
   //   · 摘要里已不存在的 provider（账号被删光）复位成「全部」；
@@ -349,7 +360,7 @@ function AccountsPage() {
               <TableHead namesHidden={store.namesHidden} allPicked={allPicked} somePicked={somePicked}
                 disabled={!visibleIds.length} onToggleAll={next => setAllPicked(visibleIds, next)} />
               <tbody>
-                {visible.map(account => {
+                {pageRows.map(account => {
                   const ctx = rowContext(account, seatMap)
                   return (
                     <React.Fragment key={account.id}>
@@ -372,11 +383,18 @@ function AccountsPage() {
           )}
         </div>
 
-        <div className='table-foot'>
-          <span>优先级是<b>全局</b>唯一的一条队列：数值越小越先用，不分提供商；拖动表头右缘可调列宽，双击还原</span>
-          <div className='spacer' />
-          <span>「设为首选」仅将账号移到全局第一位，不改变启用状态</span>
-        </div>
+        {/* 页脚是纯控制条（读数 / 每页条数 / 跳页 / 翻页器，通用件 table-shell.tsx）。
+            左侧原先那两句说明（优先级是全局队列 / 拖表头调列宽 / 设为首选的含义）
+            按用户要求移除 —— 五张表的页脚现在都不带说明文字了。 */}
+        <TableFooter
+          total={visible.length}
+          range={paging.paged ? { start: paging.rangeStart, end: paging.rangeEnd } : null}
+          page={paging.page}
+          pageCount={paging.pageCount}
+          size={paging.size}
+          onSizeChange={paging.setSize}
+          onPageChange={paging.goto}
+        />
       </section>
       <AccountsDialogs />
     </>

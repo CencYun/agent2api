@@ -26,6 +26,24 @@ command -v gh   >/dev/null || { echo "错误: 未安装 gh CLI" >&2; exit 1; }
 # gh 的 JSON 输出用 node 解析（不引入 jq 依赖，两端都有 node）
 command -v node >/dev/null || { echo "错误: 未安装 node" >&2; exit 1; }
 
+# gh 是 Go 程序：既不读 git 的 http.proxy，也不读 Windows 系统代理，只认代理
+# 环境变量。本机 git 配了代理而 gh 没配，下面的下载安装包与上传附件都是大文件
+# 传输，直连不稳时会中途失败 —— 故把 git 的代理透传给 gh。
+# 只设 HTTPS_PROXY：gh 的请求（含附件上传下载）全是 HTTPS，实测不读 HTTP_PROXY。
+# 从 git 读取而非写死端口，换代理只改 git 一处；git 未配代理就不设，退回直连
+# （外部已显式设过时不覆盖）。
+if [ -z "${HTTPS_PROXY:-}" ]; then
+  # 按 git/curl 查找代理的顺序依次尝试，兼容这几种配置写法：
+  #   http.<url>.proxy（按仓库配） / http.proxy / https.proxy
+  # 只取 --get-urlmatch 会漏掉 https.proxy，只取 https.proxy 会漏掉前两种。
+  GH_PROXY=$(git config --get-urlmatch http.proxy https://github.com || true)
+  [ -n "$GH_PROXY" ] || GH_PROXY=$(git config --get https.proxy || true)
+  if [ -n "$GH_PROXY" ]; then
+    export HTTPS_PROXY="$GH_PROXY"
+    echo "→ 已启用代理: $GH_PROXY"
+  fi
+fi
+
 # ── 1. 定位 build run 并下载安装包 ────────────────────────────
 if [ -z "$RUN_ID" ]; then
   echo "→ 查找 $TAG 触发的 build 工作流…"

@@ -11,6 +11,10 @@ import {
   DialogHeader,
   DialogTitle,
   Input,
+  Label,
+  RadioGroup,
+  RadioGroupItem,
+  SegmentedControl,
   Select,
   SelectContent,
   SelectItem,
@@ -20,18 +24,27 @@ import {
 } from '@ui'
 import {
   CATEGORIES,
+  LANGUAGES,
   NOTES,
   PROMPT_MODES,
   QUEUE_FIELDS,
   RETENTION_FIELDS,
   RETRY_FIELDS,
   STATES,
+  THEME_EVENT,
+  THEME_MODES,
   TIPS,
   TIMEOUT_FIELDS,
+  ZOOM_EVENT,
+  ZOOM_PERCENTS,
   formatBytes,
   formatCount,
+  openExternal,
+  readThemeMode,
+  readZoomPercent,
   shared,
   type NumberField,
+  type ThemeMode,
 } from './settings-model'
 import {
   addRetryCode,
@@ -93,7 +106,7 @@ import {
  * 读写流程；settings-model.ts = 桥类型 / 字段表 / 页面文案。后两个是 .ts，不会被
  * `islands/*.tsx` 的 glob 当岛加载 —— 设置页的岛只有本文件一个。
  *
- * ── ⚠ 「关于」分类的面板不归本文件 ───────────────
+ * ── ⚠ 「更新」分类（原「关于」）的面板不归本文件 ───────────
  * `.settings-pane[data-cat="about"]` 是**另一个岛**（update-panel.tsx）的挂载点：它在模块
  * 加载期就 `document.querySelector('.settings-pane[data-cat="about"]')`，找到才把 React root
  * 建上去。所以这里必须做到两件事：
@@ -102,7 +115,7 @@ import {
  *      「没有 children 的宿主元素」不会去碰它的子节点，所以只要**始终**渲染这个 div、
  *      不给它 children、不改变它在兄弟中的位置，它的内容就一直是那个岛的；
  *   ② 让它在**模块加载期就同步存在于 DOM 里** —— 见 mount() 的注释（flushSync）。
- * 分类切换（`.active`）走 React 的 className：切到「关于」时这个 div 会拿到 active，
+ * 分类切换（`.active`）走 React 的 className：切到「更新」时这个 div 会拿到 active，
  * 那个岛的面板跟着显示，与旧实现命令式切 class 等价。
  *
  * ── 页面骨架照抄 index.html，只换控件 ────────────
@@ -115,6 +128,8 @@ import {
  * 它们是这一页的排版而不是「组件」（样式在 ui/css/page-settings.css）。
  * 控件换组件库：原生 input → Input、原生 checkbox → Switch、原生 select → Select 一族、
  * button → Button、`.badge` → Badge、`#retention-modal` → Dialog。
+ * 左栏分类项带**图标**（icons.js 里那组描边风格的设置页图标，17px 图标盒与主侧栏
+ * 同款）—— 标签因此不再受「两字」限制：图标负责一眼认出、文字负责说清。
  *
  * 三处细节：
  *   · 问号仍用 `[data-tip]`（10 条说明动辄几百字，tooltip.js 的自动增强仍在页面上跑，
@@ -128,6 +143,15 @@ import {
  */
 
 /* ─── 小组件 ───────────────────────────────── */
+
+/**
+ * 图标（icons.js 的内联 SVG 串）：整站共用一份图标集，这里只做注入。
+ * 图标在 set（左栏分类）里都已存在于 icons.js；取不到时返回空串（图标位留空，
+ * 不影响文字与点击 —— 按名字取不到是开发期错误，不该把页面弄崩）。
+ */
+function iconHtml(name: string, size: number): string {
+  return shared().wbIcons?.icon?.(name, size) || ''
+}
 
 /** 三态徽章：`.badge`（检测中…）/ `.badge.ok` / `.badge.bad` → Badge 的 variant */
 function StatusBadge({ tone, children }: { tone: 'idle' | 'ok' | 'bad'; children: React.ReactNode }) {
@@ -301,6 +325,132 @@ function GeneralPane({ snap }: { snap: SettingsSnapshot }) {
           <div className='settings-state'>
             {snap.unitsChinese ? STATES.unitsOn : STATES.unitsOff}
           </div>
+        </div>
+      </section>
+    </>
+  )
+}
+
+/* ─── 显示分类 ─────────────────────────────── */
+
+/** 显示模式三档的状态行文案（三条文案在 settings-model 的 STATES 里） */
+function themeStateText(mode: ThemeMode): string {
+  if (mode === 'light') return STATES.themeLight
+  if (mode === 'dark') return STATES.themeDark
+  return STATES.themeSystem
+}
+
+/**
+ * 显示分类：显示模式 / 界面缩放 / 语言。
+ *
+ * 三项都是**纯前端偏好** —— 与后端配置无关，所以不参与 settings-state 的 load
+ * （那边一次并行取全部后端设置），这里自己持两个受控值就够了。
+ *
+ * 主题与缩放的**唯一应用入口都在 app.js**（见 settings-model 的显示偏好一节）：
+ * 这里改完只调 wbApp.applyTheme / applyZoom，再靠 'wb:theme' / 'wb:zoom' 事件
+ * 跟随 —— 侧边栏底部的主题三键是同一个设置的另一个入口，两边必须互相同步；
+ * 谁也不去读对方的状态，只认事件里带的新值。
+ *
+ * 网页端：主题照常可用（data-theme 是纯 CSS 生效，窗口主题在 shim 里是空实现）；
+ * 界面缩放禁用 —— 浏览器里的缩放归浏览器自己的 Ctrl +/- 管。
+ */
+function DisplayPane() {
+  const [theme, setTheme] = React.useState<ThemeMode>(readThemeMode)
+  const [zoom, setZoom] = React.useState<number>(readZoomPercent)
+  // 端别取自桥（platform）而不是 navigator：与设置页其它端别判断同一口径
+  const isWeb = shared().workbuddyDesktop?.platform === 'web'
+
+  // 跟随别人的改动（侧边栏三键、index.html 头部内联脚本的抢先应用、或本页自身）：
+  // 事件里带着新值，直接采纳，不必回头读 localStorage
+  React.useEffect(() => {
+    const onTheme = (event: Event) => setTheme(String((event as CustomEvent).detail || 'system') as ThemeMode)
+    const onZoom = (event: Event) => setZoom(Number((event as CustomEvent).detail) || 100)
+    window.addEventListener(THEME_EVENT, onTheme)
+    window.addEventListener(ZOOM_EVENT, onZoom)
+    return () => {
+      window.removeEventListener(THEME_EVENT, onTheme)
+      window.removeEventListener(ZOOM_EVENT, onZoom)
+    }
+  }, [])
+
+  const zoomLabel = zoom === 100 ? '100%（默认）' : `${zoom}%`
+  const language = LANGUAGES[0]
+
+  return (
+    <>
+      <section className='panel'>
+        <PanelHead title='显示模式' tip={TIPS.displayTheme} />
+        <div className='panel-body'>
+          <div>
+            <SegmentedControl<ThemeMode>
+              aria-label='显示模式'
+              options={THEME_MODES}
+              value={theme}
+              onValueChange={next => shared().wbApp?.applyTheme?.(next)}
+            />
+          </div>
+          <div className='settings-state'>{themeStateText(theme)}</div>
+        </div>
+      </section>
+
+      <section className='panel'>
+        <PanelHead title='界面缩放' tip={TIPS.displayZoom} />
+        <div className='panel-body'>
+          <div className='retention-list'>
+            <div className='retention-row'>
+              <label htmlFor='settings-zoom'>缩放比例</label>
+              <span className='prompt-input'>
+                {/* 档位是 80%–130% 的 11 个定值，用下拉而不是滑块：每一档都要能精确
+                    复述（用户问「我现在多少」时答案是个整数），且组件库目前没有 Slider。
+                    展示文案显式给 SelectValue，不依赖 value 自动显示。 */}
+                <Select
+                  value={String(zoom)}
+                  onValueChange={next => shared().wbApp?.applyZoom?.(Number(next))}
+                >
+                  <SelectTrigger
+                    id='settings-zoom'
+                    className='w-[140px]'
+                    disabled={isWeb}
+                    aria-label='界面缩放比例'
+                  >
+                    <SelectValue>{zoomLabel}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ZOOM_PERCENTS.map(percent => (
+                      <SelectItem key={percent} value={String(percent)}>
+                        {percent === 100 ? '100%（默认）' : `${percent}%`}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </span>
+              <div className='hint'>
+                放大或缩小整个界面（文字与控件一起变），效果与浏览器 Ctrl +/- 相同：
+                共 11 档，立即生效并记住。
+              </div>
+            </div>
+          </div>
+          <div className='settings-state'>
+            {isWeb ? STATES.zoomWeb : zoom === 100 ? STATES.zoomDefault : `当前按 ${zoom}% 显示。`}
+          </div>
+        </div>
+      </section>
+
+      <section className='panel'>
+        <PanelHead title='语言设置' tip={TIPS.displayLanguage} />
+        <div className='panel-body'>
+          <div className='settings-switches'>
+            {/* 单选项而不是下拉：语种少的时候一眼看得见全部可选、选中的也一目了然。
+                目前只有一项 —— 选中它就是「当前语言」，改不动任何东西；等真有了第二种
+                语言，这里会自己长出第二行（表在 settings-model 的 LANGUAGES）。 */}
+            <RadioGroup value={language.value} onValueChange={() => {}}>
+              <Label className='flex cursor-pointer items-center gap-2 text-[12.5px] font-medium'>
+                <RadioGroupItem value={language.value} />
+                {language.label}
+              </Label>
+            </RadioGroup>
+          </div>
+          <div className='settings-state'>{STATES.languageOnly}</div>
         </div>
       </section>
     </>
@@ -525,32 +675,74 @@ function debugStateText(debug: DebugState): string {
   return debug.on ? `${STATES.debugOn}${stored}凭据类请求头已脱敏。` : STATES.debugOff
 }
 
+/* ─── 重试 / 超时分类（从「网关」拆出的两个独立菜单）── */
+
+/** 请求超时（拆出理由见 settings-model 的 CATEGORIES 说明） */
+function TimeoutPane({ snap }: { snap: SettingsSnapshot }) {
+  return (
+    <section className='panel'>
+      <PanelHead
+        title='请求超时'
+        tip={TIPS.timeouts}
+        badge={numericBadge(snap.timeouts)}
+        actions={<RefreshButton id='btn-timeouts-refresh' onClick={() => void refreshTimeouts()} />}
+      />
+      <div className='panel-body'>
+        <div className='retention-list'>
+          {TIMEOUT_FIELDS.map(field => (
+            <NumberRow
+              key={field.key}
+              field={field}
+              value={snap.timeouts.values?.[field.key] ?? null}
+              disabled={snap.busy === 'timeouts'}
+              onCommit={raw => saveTimeoutField(field, raw)}
+            />
+          ))}
+        </div>
+        <div className='hint retention-note'>{NOTES.timeouts}</div>
+      </div>
+    </section>
+  )
+}
+
+/** 请求重试：数字参数 + 「指定错误码」名单（两段共用同一份保存流程） */
+function RetryPane({ snap }: { snap: SettingsSnapshot }) {
+  return (
+    <section className='panel'>
+      <PanelHead
+        title='请求重试'
+        tip={TIPS.retry}
+        badge={numericBadge(snap.retry)}
+        actions={<RefreshButton id='btn-retry-refresh' onClick={() => void refreshRetry()} />}
+      />
+      <div className='panel-body'>
+        <div className='retention-list'>
+          {RETRY_FIELDS.map(field => (
+            <NumberRow
+              key={field.key}
+              field={field}
+              value={snap.retry.values?.[field.key] ?? null}
+              disabled={snap.busy === 'retry'}
+              onCommit={raw => saveRetryField(field, raw)}
+            />
+          ))}
+          <RetryCodesField
+            codes={snap.retryCodes}
+            status={snap.retry.status}
+            busy={snap.busy === 'codes' || snap.busy === 'retry'}
+          />
+        </div>
+        <div className='hint retention-note'>{NOTES.retry}</div>
+      </div>
+    </section>
+  )
+}
+
+/* ─── 网关分类 ─────────────────────────────── */
+
 function GatewayPane({ snap }: { snap: SettingsSnapshot }) {
   return (
     <>
-      <section className='panel'>
-        <PanelHead
-          title='请求超时'
-          tip={TIPS.timeouts}
-          badge={numericBadge(snap.timeouts)}
-          actions={<RefreshButton id='btn-timeouts-refresh' onClick={() => void refreshTimeouts()} />}
-        />
-        <div className='panel-body'>
-          <div className='retention-list'>
-            {TIMEOUT_FIELDS.map(field => (
-              <NumberRow
-                key={field.key}
-                field={field}
-                value={snap.timeouts.values?.[field.key] ?? null}
-                disabled={snap.busy === 'timeouts'}
-                onCommit={raw => saveTimeoutField(field, raw)}
-              />
-            ))}
-          </div>
-          <div className='hint retention-note'>{NOTES.timeouts}</div>
-        </div>
-      </section>
-
       <section className='panel'>
         <PanelHead
           title='排队等待'
@@ -571,34 +763,6 @@ function GatewayPane({ snap }: { snap: SettingsSnapshot }) {
             ))}
           </div>
           <div className='hint retention-note'>{NOTES.queue}</div>
-        </div>
-      </section>
-
-      <section className='panel'>
-        <PanelHead
-          title='请求重试'
-          tip={TIPS.retry}
-          badge={numericBadge(snap.retry)}
-          actions={<RefreshButton id='btn-retry-refresh' onClick={() => void refreshRetry()} />}
-        />
-        <div className='panel-body'>
-          <div className='retention-list'>
-            {RETRY_FIELDS.map(field => (
-              <NumberRow
-                key={field.key}
-                field={field}
-                value={snap.retry.values?.[field.key] ?? null}
-                disabled={snap.busy === 'retry'}
-                onCommit={raw => saveRetryField(field, raw)}
-              />
-            ))}
-            <RetryCodesField
-              codes={snap.retryCodes}
-              status={snap.retry.status}
-              busy={snap.busy === 'codes' || snap.busy === 'retry'}
-            />
-          </div>
-          <div className='hint retention-note'>{NOTES.retry}</div>
         </div>
       </section>
 
@@ -858,6 +1022,64 @@ function DataPane({ snap }: { snap: SettingsSnapshot }) {
   )
 }
 
+/* ─── 反馈与需求分类 ───────────────────────── */
+
+/**
+ * 三个入口，分别指向仓库里预设好模板的 GitHub issue 表单。
+ * 用系统默认浏览器打开（`openExternal` → 壳命令 `open_release_page`，只放行
+ * http(s)）：应用内 webview 打开会白屏，而且提交 issue 需要用户自己的 GitHub 登录态。
+ */
+const FEEDBACK_LINKS = [
+  {
+    title: '问题反馈',
+    desc: '遇到 Bug、报错或异常行为',
+    cta: '去反馈',
+    url: 'https://github.com/aimod-cc/agent2api/issues/new?template=bug_report.yml',
+  },
+  {
+    title: '功能建议',
+    desc: '想要的新功能或改进想法',
+    cta: '提建议',
+    url: 'https://github.com/aimod-cc/agent2api/issues/new?template=feature_request.yml',
+  },
+  {
+    title: '请求提供商 / 模型支持',
+    desc: '希望接入新的提供商或模型',
+    cta: '去申请',
+    url: 'https://github.com/aimod-cc/agent2api/issues/new?template=provider_request.yml',
+  },
+] as const
+
+function FeedbackPane() {
+  return (
+    <section className='panel'>
+      <PanelHead title='反馈与需求' />
+      <div className='panel-body'>
+        <div className='hint'>
+          点下面的入口会用系统默认浏览器打开 GitHub 的对应表单（需要 GitHub 账号，
+          模板已预设好，填完直接提交即可）。
+        </div>
+        <div className='mt-3 flex flex-col gap-2'>
+          {FEEDBACK_LINKS.map(item => (
+            <div
+              key={item.url}
+              className='flex items-center justify-between gap-3 rounded-md border border-hairline bg-surface-2 px-3 py-2.5'
+            >
+              <div className='min-w-0'>
+                <div className='text-[12.5px] text-foreground'>{item.title}</div>
+                <div className='mt-0.5 text-[12px] text-subtle'>{item.desc}</div>
+              </div>
+              <Button variant='outline' size='sm' onClick={() => void openExternal(item.url)}>
+                {item.cta}
+              </Button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  )
+}
+
 /* ─── 保留期改小的确认框 ───────────────────── */
 
 /**
@@ -905,7 +1127,7 @@ function SettingsPage() {
   const panesRef = React.useRef<HTMLDivElement | null>(null)
 
   // 切换分类后把内容栏滚回顶部（旧实现是命令式写 scrollTop）：否则上一类的滚动位置会
-  // 带到新分类上，打开「关于」却停在半截。scrollReset 每次 showCategory 都递增，
+  // 带到新分类上，打开「更新」却停在半截。scrollReset 每次 showCategory 都递增，
   // 于是「切回同一分类」（页面重入时 load → restoreCategory）同样会滚回顶部。
   React.useEffect(() => {
     const panes = panesRef.current
@@ -925,6 +1147,9 @@ function SettingsPage() {
             data-cat={item.id}
             onClick={() => selectCategory(item.id)}
           >
+            {/* 分类图标（icons.js）：与主侧栏同款 17px 图标盒，颜色随 currentColor
+                （选中态自动变主题色） */}
+            <span className='ico' dangerouslySetInnerHTML={{ __html: iconHtml(item.icon, 17) }} />
             {item.label}
           </button>
         ))}
@@ -934,8 +1159,17 @@ function SettingsPage() {
         <div className={paneClass('general')} data-cat='general'>
           <GeneralPane snap={snap} />
         </div>
+        <div className={paneClass('display')} data-cat='display'>
+          <DisplayPane />
+        </div>
         <div className={paneClass('gateway')} data-cat='gateway'>
           <GatewayPane snap={snap} />
+        </div>
+        <div className={paneClass('retry')} data-cat='retry'>
+          <RetryPane snap={snap} />
+        </div>
+        <div className={paneClass('timeout')} data-cat='timeout'>
+          <TimeoutPane snap={snap} />
         </div>
         <div className={paneClass('security')} data-cat='security'>
           <SecurityPane snap={snap} />
@@ -943,10 +1177,13 @@ function SettingsPage() {
         <div className={paneClass('data')} data-cat='data'>
           <DataPane snap={snap} />
         </div>
+        <div className={paneClass('feedback')} data-cat='feedback'>
+          <FeedbackPane />
+        </div>
         {/*
-          「关于」的面板由另一个岛（update-panel.tsx）接管：它按这个选择器找挂载点，
-          找到就把 React root 建在这个 div 上。所以这里必须是**空的**、且永远保持同一个
-          元素（不给 children、不改它在兄弟中的位置、不条件渲染）——
+          「更新」的面板（原「关于」，id 仍是 about）由另一个岛（update-panel.tsx）接管：
+          它按这个选择器找挂载点，找到就把 React root 建在这个 div 上。所以这里必须是
+          **空的**、且永远保持同一个元素（不给 children、不改它在兄弟中的位置、不条件渲染）——
           React 对没有 children 的宿主元素不会去动它的 DOM 子树，那个岛的渲染结果才留得住。
           显隐照旧：className 上的 active 由本文件按当前分类切。
         */}
@@ -972,7 +1209,7 @@ let pageRoot: ReturnType<typeof createRoot> | null = null
  * `.settings-pane[data-cat="about"]` 是 update-panel.tsx 的挂载点，它在**自己的模块加载期**
  * 就 `document.querySelector` 这个选择器，找到才建 root。React 19 的 `createRoot().render()`
  * 是并发调度，提交可能落在下一个宏任务 —— 那一刻这个 pane 还没进 DOM，update-panel 只会
- * 退化成等 DOMContentLoaded，而那时它早已过了注册窗口，「设置 → 关于」会整块空白。
+ * 退化成等 DOMContentLoaded，而那时它早已过了注册窗口，「设置 → 更新」会整块空白。
  * 两个岛的求值顺序由 glob 的文件名字典序决定（settings-page.tsx 排在 update-panel.tsx 前），
  * 所以这里同步提交之后，它一定能查到。
  *

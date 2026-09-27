@@ -221,6 +221,25 @@ pub fn schedule_now(key: &str) -> Result<(), String> {
     .map(|_| ())
 }
 
+/// 清除一条任务的**失败冷却**（`retry_at` 归零），不动排期与最近尝试时间。
+///
+/// 用途：调用方确认「上次失败的前提条件已经变了」—— 对更新检查就是换出网线路 /
+/// 换 GitHub 令牌（冷却记的是某一个配额桶的恢复时刻，匿名按出口 IP 计、带令牌
+/// 按用户计，换了桶之后旧冷却不再适用）。清掉它让用户立刻能重试一次，而不是
+/// 对着界面上好端端的「检查更新」按钮空等几十分钟。
+///
+/// 排期（`next_run_at`）**保持不动**：定时任务仍按自己的间隔跑，这条函数只解开
+/// 「现在不让试」的那把锁。`adjust_clock` 与其它入口一样先跑一遍，防系统时钟
+/// 回拨把旧时间当成无限期冷却。
+pub fn clear_cooldown(key: &str) -> Result<(), String> {
+    change(key, |state| {
+        let now = logging::now_ms();
+        state.adjust_clock(now);
+        state.retry_at = 0;
+    })
+    .map(|_| ())
+}
+
 /// 改间隔以最近一次尝试/完成为起点，不因重启或开关切换重新计时。
 pub fn reschedule(key: &str, interval_ms: i64) -> Result<(), String> {
     change(key, |state| {

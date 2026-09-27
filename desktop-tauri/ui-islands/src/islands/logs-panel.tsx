@@ -2,10 +2,16 @@ import * as React from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   Badge, Button, InputGroup, InputGroupAddon, InputGroupInput,
-  Pager,
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
   SegmentedControl, type SegmentedControlOption,
 } from '@ui'
+import {
+  CLIENT_PAGE_SIZES,
+  TableFooter,
+  readPageSize,
+  writePageSize,
+  type PageSizeChoice,
+} from './table-shell'
 
 /**
  * Agent2API · 系统事件日志面板（筛选 / 分页 / 导出 / 清空）—— React 岛。
@@ -35,8 +41,8 @@ import {
  * Tailwind 会让这一页与其它页长得不一样（样式在 ui/css/page-logs.css 与 layout.css）。控件一律
  * 换：button → Button、`.badge` → Badge、原生 `<select>` → Select 一族、搜索框 → InputGroup 一族
  * （图标 ⌕，与 input-control.tsx 用法一致）、时间档位 → SegmentedControl（不再调 wbSegmented，
- * 也不再留 `#logs-range` 那个挂载点）、分页栏 → Pager（`.log-pager` / `.log-pager-info` 随之退场，
- * 边界判断与读数收在组件里，与请求日志页同一口径）。
+ * 也不再留 `#logs-range` 那个挂载点）、分页栏 → 通用表格页脚（islands/table-shell.tsx：
+ * 读数 / 每页条数 / 跳页 / 翻页器五张表一套，边界判断与读数收在组件里）。
  *
  * ── 坑：带 Tailwind display 工具类的元素上 hidden 无效 ─────────
  * 组件库的工具类是**分层 + !important** 的，tokens.css 的 `[hidden] { display:none !important }`
@@ -136,8 +142,12 @@ function toast(message: string, kind?: 'err' | 'ok'): void {
 
 /** 自动刷新间隔兜底值（毫秒），1 秒 = 后端默认间隔（`DEFAULT_LOGS_AUTO_REFRESH_SECONDS`） */
 const DEFAULT_AUTO_REFRESH_MS = 1_000
-/** 事件日志每页条数 */
-const PAGE_SIZE = 50
+/**
+ * 每页条数的档位：本页是**客户端分页**（一次拉满 FETCH_LIMIT 条，翻页只重绘、
+ * 不打接口），所以给到「全部」这一档也没有额外开销 —— 与请求日志（服务端真分页、
+ * 没有「全部」）的差别就在这里，见 table-shell 的文件头。
+ */
+const PAGE_SIZES = CLIENT_PAGE_SIZES
 /** 系统事件单次拉取上限（后端上限）：一次拿全，总页数才对得上真实结果 */
 const FETCH_LIMIT = 500
 /** 时间档位的持久化键（请求日志页的档位在 requests-panel，两键独立） */
@@ -334,8 +344,8 @@ function entriesOf(result: LogQueryResult | null | undefined): LogEntry[] {
 }
 
 /** 总页数按条目数算；日志被清空或筛选变严后页码会越界，夹回有效范围 */
-function clampPage(page: number, entries: LogEntry[]): number {
-  const pageCount = Math.max(1, Math.ceil(entries.length / PAGE_SIZE))
+function clampPage(page: number, entries: LogEntry[], size: PageSizeChoice): number {
+  const pageCount = Math.max(1, size === 'all' ? 1 : Math.ceil(entries.length / size))
   return Math.min(Math.max(1, page), pageCount)
 }
 
@@ -514,6 +524,8 @@ function LogsPanel() {
   const [filters, setFilters] = React.useState<Filters>(readSavedFilters)
   const [range, setRange] = React.useState<string>(readRange)
   const [page, setPage] = React.useState(1)
+  /** 每页条数（页脚可换，存盘记住）：与 page 一样落一份 ref，异步回调读得到最新值 */
+  const [size, setSize] = React.useState<PageSizeChoice>(() => readPageSize('logs'))
   /** 在途操作：按钮文案与禁用都看它（互斥守卫读的是模块级 panelBusy） */
   const [busy, setBusy] = React.useState<{ which: 'clear' | 'export'; label: string } | null>(null)
   /** 自动刷新配置：挂载前的推送已经写在模块级变量里，这里取的就是最新的那份 */
@@ -537,6 +549,7 @@ function LogsPanel() {
   const filtersRef = React.useRef(filters)
   const rangeRef = React.useRef(range)
   const pageRef = React.useRef(page)
+  const sizeRef = React.useRef(size)
   const dataRef = React.useRef(data)
 
   const applyFilters = React.useCallback((patch: Partial<Filters>): Filters => {
@@ -547,6 +560,11 @@ function LogsPanel() {
   }, [])
   const applyRange = React.useCallback((next: string) => { rangeRef.current = next; setRange(next) }, [])
   const applyPage = React.useCallback((next: number) => { pageRef.current = next; setPage(next) }, [])
+  const applySize = React.useCallback((next: PageSizeChoice) => {
+    sizeRef.current = next
+    setSize(next)
+    writePageSize('logs', next)
+  }, [])
   const applyData = React.useCallback((next: PanelData) => { dataRef.current = next; setData(next) }, [])
 
   /** 补读上次会话的筛选（只做一次；见 readSavedFilters 的说明） */
@@ -584,7 +602,7 @@ function LogsPanel() {
       const keepTop = resetPage ? 0 : (listRef.current?.scrollTop ?? 0)
       const next = fromResult(result, dataRef.current)
       applyData(next)
-      applyPage(clampPage(pageRef.current, entriesOf(result)))
+      applyPage(clampPage(pageRef.current, entriesOf(result), sizeRef.current))
       pendingScrollRef.current = pageRef.current === pageBefore ? keepTop : 0
       applyStats(nextStats)
       // 存过的分类可能已经不在后端字典里（字典随版本变过）：旧实现那种情况下对原生 select 赋值
@@ -601,7 +619,7 @@ function LogsPanel() {
         console.warn('读取运行日志失败:', errorMessage(error))
         // 非静默失败按旧实现清成空态；silent 的轮询失败保留上一次的数据（别闪空）
         applyData(fromResult(null, dataRef.current))
-        applyPage(clampPage(pageRef.current, []))
+        applyPage(clampPage(pageRef.current, [], sizeRef.current))
       }
     }
   }, [applyData, applyPage, restoreSavedFilters])
@@ -611,7 +629,7 @@ function LogsPanel() {
     // 不带参数 = 只重绘（旧实现翻页时这么调）：React 里状态没变就没有重绘的必要
     if (result === undefined) return
     applyData(fromResult(result, dataRef.current))
-    applyPage(clampPage(pageRef.current, entriesOf(result)))
+    applyPage(clampPage(pageRef.current, entriesOf(result), sizeRef.current))
   }, [applyData, applyPage])
 
   /**
@@ -763,9 +781,22 @@ function LogsPanel() {
    * 新一页从顶部开始读，否则会停在上一页的滚动位置。
    */
   function gotoPage(target: number): void {
-    const next = clampPage(target, dataRef.current.entries)
+    const next = clampPage(target, dataRef.current.entries, sizeRef.current)
     if (next === pageRef.current) return
     applyPage(next)
+    pendingScrollRef.current = 0
+  }
+
+  /**
+   * 换每页条数：页码按「当前第一条」换算，用户不会被甩回第一页 ——
+   * 停在第 3 页（每页 50，即第 101 条）改成每页 100，应当落在第 2 页的第 101 条上。
+   */
+  function onSizeChange(next: PageSizeChoice): void {
+    if (next === sizeRef.current) return
+    const total = dataRef.current.entries.length
+    const first = total ? (pageRef.current - 1) * (sizeRef.current === 'all' ? total : sizeRef.current) : 0
+    applySize(next)
+    applyPage(next === 'all' ? 1 : Math.floor(first / next) + 1)
     pendingScrollRef.current = 0
   }
 
@@ -803,8 +834,15 @@ function LogsPanel() {
   /* ─── 渲染 ─────────────────────────────── */
 
   const entries = data.entries
-  const pageCount = Math.max(1, Math.ceil(entries.length / PAGE_SIZE))
-  const rows = entries.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+  const paged = size !== 'all'
+  const pageCount = Math.max(1, paged ? Math.ceil(entries.length / size) : 1)
+  const currentPage = Math.min(Math.max(1, page), pageCount)
+  const rows = paged
+    ? entries.slice((currentPage - 1) * size, currentPage * size)
+    : entries
+  /** 本页显示的区间（1 起闭区间）：给页脚的「当前第 a–b 条」用 */
+  const pageRangeStart = entries.length ? (paged ? (currentPage - 1) * size + 1 : 1) : 0
+  const pageRangeEnd = entries.length ? (paged ? pageRangeStart + rows.length - 1 : entries.length) : 0
   const categories = data.categories
 
   /**
@@ -921,19 +959,20 @@ function LogsPanel() {
         </div>
       </div>
 
-      <div className='panel-foot'>
-        <span>日志保存在 <code id='logs-file'>{data.file}</code>，保留最近 500 条，重启后仍可查询。</span>
-        <span>429 自动切换会带上「原账号 → 目标账号」</span>
-        <div className='spacer' />
-        {/* 分页：页脚右侧，与面板头部的操作按钮同侧。边界判断与「第 N / M 页」读数都在 Pager 里
-            （与请求日志页同一个件）。flex-none 补的是旧 CSS `.log-pager { flex: 0 0 auto }` —— 组
-            件根是默认可收缩的 flex 项，不补的话窄窗口下整组会被压扁而不是像原来那样整组换行；
-            whitespace-nowrap 是继承属性，补的是 `.log-pager-info { white-space: nowrap }`，读数
-            不会在窄窗口里断成两行。翻页仍然只重绘不打接口（数据一次拉满，见 gotoPage）；原先
-            两颗按钮也没有「在途禁用」，这里不新加（Pager 的 disabled 缺省 false）。 */}
-        <Pager page={page} pageCount={pageCount} onPageChange={gotoPage}
-          className='flex-none whitespace-nowrap' />
-      </div>
+      {/* 读数 / 每页条数 / 跳页 / 翻页器交给通用表格外壳（table-shell.tsx）：五张表一套。
+          翻页只重绘不打接口（数据一次拉满，见 gotoPage），换档位同理 —— 所以这里能给出
+          「全部」那一档。页脚左侧原先还有两句说明（日志文件路径 / 429 切换文案），
+          按用户要求移除；`#logs-file` 那个元素随之消失，全仓无其它引用。 */}
+      <TableFooter
+        total={entries.length}
+        range={paged ? { start: pageRangeStart, end: pageRangeEnd } : null}
+        page={currentPage}
+        pageCount={pageCount}
+        size={size}
+        sizes={PAGE_SIZES}
+        onSizeChange={onSizeChange}
+        onPageChange={gotoPage}
+      />
     </section>
   )
 }

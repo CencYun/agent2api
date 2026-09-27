@@ -12,6 +12,15 @@
       const dark = mode === 'dark'
         || (mode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
       document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+      // 界面缩放（设置页「显示」）也在这里抢先交一次：缩放是 WebView 层的效果，
+      // 不存在「先贴个属性」这种同步办法，只能尽早发命令 —— 晚了首屏会看到缩放跳一下。
+      // 这只是**尽力而为**的反闪烁：桥（workbuddyDesktop）此时已由壳注入（初始化脚本
+      // 先于页面脚本执行），但命令异步生效且失败不重试；权威的一次在 app.js 的启动
+      // 路径上（applyZoom(storedZoom())）—— 同一份 localStorage，重复应用无副作用。
+      const zoom = Number(localStorage.getItem('workbuddy-desktop-zoom'));
+      if (Number.isFinite(zoom) && zoom >= 80 && zoom <= 130) {
+        try { window.workbuddyDesktop?.setZoom?.(zoom / 100); } catch { /* 浏览器直开忽略 */ }
+      }
     })();
   </script>
   <link rel="stylesheet" href="css/tokens.css">
@@ -57,7 +66,6 @@
         <div class="brand-logo"></div>
         <div class="brand-text">
           <h1>Agent2API</h1>
-          <div class="sub">OpenAI 兼容网关</div>
         </div>
       </div>
 
@@ -236,9 +244,10 @@
              renderDebug, renderSanitize, renderPrompt, renderStorage, showCategory }。
              分类导航 / 面板的类名照旧（.settings-layout / .settings-nav / .settings-nav-item /
              .settings-pane / .panel …），换掉的只是里面的控件。
-             **关于分类（data-cat="about"）是另一个岛**（islands/update-panel.tsx 的软件更新
-             面板）的挂载点：设置页的岛会把它原样渲染成空容器并同步提交首帧，
-             那个岛在模块加载期就把它接管过去 —— 别把这一块从岛的树里拿掉。 -->
+             **更新分类（标签是「更新」，data-cat 仍是 "about"）是另一个岛**
+             （islands/update-panel.tsx 的软件更新面板）的挂载点：设置页的岛会把它
+             原样渲染成空容器并同步提交首帧，那个岛在模块加载期就把它接管过去 ——
+             别把这一块从岛的树里拿掉。 -->
         <section class="page" data-page="settings"></section>
 
         </div>

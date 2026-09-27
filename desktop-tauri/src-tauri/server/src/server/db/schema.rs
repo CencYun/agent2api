@@ -53,10 +53,10 @@
 //! 当前配置项（`apiKeys` / `modelRules` / `logRetentionDays` / `debugMode` /
 //! `sanitizeBlacklistFingerprints` / `promptMode` / `promptFile` /
 //! `scheduledTasks` / `autoCheckin` / `locale` / `lastRequestModel` /
-//! `providerRoute` / 三个 `*Dir` / 三个 `*RetentionDays` / 三个 `retry*` /
-//! 六条 `scheduledTasks.*` 子键 / 三个 `*Imported` 标记 / 旧字段 `apiKey`）
-//! 与固定键**无冲突**，逐项核对过（全仓 `update_raw_field` / `raw.insert` /
-//! `KEY_*` 常量的取值集合 vs 下面的 `RESERVED_KV_KEYS`）。
+//! `providerRoute` / `updateProxy` / 三个 `*Dir` / 三个 `*RetentionDays` /
+//! 三个 `retry*` / 六条 `scheduledTasks.*` 子键 / 三个 `*Imported` 标记 /
+//! 旧字段 `apiKey`）与固定键**无冲突**，逐项核对过（全仓 `update_raw_field` /
+//! `raw.insert` / `KEY_*` 常量的取值集合 vs 下面的 `RESERVED_KV_KEYS`）。
 //! 后加固定键名时**必须**回来核对一次：撞名的代价是用户的配置或状态被静默
 //! 覆盖，而两处代码离得很远（一个在本文件，一个在使用方）。
 

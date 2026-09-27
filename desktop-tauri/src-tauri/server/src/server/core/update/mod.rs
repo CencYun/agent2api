@@ -26,6 +26,7 @@
 
 mod check;
 mod client;
+mod token;
 mod version;
 
 use std::path::PathBuf;
@@ -41,6 +42,9 @@ pub use version::{
     assert_downloadable, compare_versions, installer_kind, pick_installer, safe_file_name,
     UpdateError, DEFAULT_REPO, GITHUB_API, MAX_INSTALLER_BYTES,
 };
+/// 「更新设置」弹窗的 GitHub 令牌接口（api::update 走这两条；加解密本体
+/// 只在 token 模块内部，见它的模块头）
+pub use token::{set_token, status_json};
 
 /// 请求 GitHub 的 UA（Node 版字面量，随项目改名同步）
 const USER_AGENT: &str = "agent2api-local-proxy";

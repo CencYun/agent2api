@@ -279,6 +279,10 @@ const BRIDGE_JS: &str = r#"
     // 见后端 `api::model_manage::remove_custom` 的说明。
     addCustomModel: (provider, id) => call('POST', '/api/models/custom', { provider, id }),
     removeCustomModel: (provider, id) => call('POST', '/api/models/custom/remove', { provider, id }),
+    // 能力位覆盖（只服务内置家；自定义家走 /api/custom-providers/models 的
+    // 整表保存，见后端 handler 的说明）。`capabilities` 各键三态：不给 = 不改、
+    // null = 恢复清单原值、给值 = 覆盖。
+    setModelCapabilities: (provider, id, capabilities) => call('POST', '/api/models/capabilities', { provider, id, capabilities }),
 
     // ── 网关 API Key（多把）──
     getKeys: () => call('GET', '/api/keys'),
@@ -395,6 +399,14 @@ const BRIDGE_JS: &str = r#"
     checkUpdate: () => invoke('check_update'),
     // 最近一次「检查更新」的结果（定时任务写入；app.js 轮询它亮侧栏徽标）
     getUpdateStatus: () => call('GET', '/api/update/status'),
+    // 「软件更新」的出网线路：null = 直连。更新面板「检查更新」左侧的下拉读写
+    // （检查与下载安装包都走它，后端出口候选的第一优先级）
+    getUpdateProxy: () => call('GET', '/api/update/proxy'),
+    setUpdateProxy: payload => call('POST', '/api/update/proxy', payload),
+    // 「软件更新」的 GitHub 令牌：读只报 {filled, origin}（后端永不回显本体），
+    // 写传 {token: '…' | null}（null = 清除）。加密落库在后端做
+    getUpdateToken: () => call('GET', '/api/update/token'),
+    setUpdateToken: payload => call('POST', '/api/update/token', payload),
     downloadUpdate: payload => invoke('download_update', {
       url: String((payload && payload.url) || ''),
       name: (payload && payload.name) ? String(payload.name) : null,
@@ -533,6 +545,13 @@ const BRIDGE_JS: &str = r#"
     setWindowTheme: theme => invoke('set_window_theme', {
       theme: theme === 'dark' || theme === 'light' ? theme : null,
     }),
+
+    // ── 本壳特有：界面缩放（设置页「显示 → 界面缩放」）──
+    // 入参是**因子**（0.8 ~ 1.3），与壳命令 set_zoom 一致；界面上的百分数
+    // 除以 100 再传进来。返回实际生效的因子（壳侧会规整并校验范围），
+    // 调用方拿它回写显示。网页端 shim 里没有这个方法（浏览器自带缩放，
+    // 界面按 platform==='web' 把这一项禁用掉，不会走到这里）。
+    setZoom: scale => invoke('set_zoom', { scale }),
 
     // ── 本壳特有：自定义标题栏的窗口三键 ──
     // 主窗口去掉了系统装饰（lib.rs 建窗处 decorations(false)），最小化 /

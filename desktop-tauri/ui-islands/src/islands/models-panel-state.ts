@@ -44,6 +44,13 @@ type UpstreamOption = { id: string; label: string; off: boolean }
 export type MappingContext = { alias?: string; target: string; provider: string }
 /** 添加模型弹窗的上下文：选中自定义家时这家是锁定的（见 openCustomModel） */
 export type CustomModelContext = { provider: string; locked: boolean }
+/**
+ * 能力弹窗的上下文：只带 `(provider, id)` 两个定位键 —— 弹窗打开时从当前
+ * 快照里查那一行（展示名、当前生效值、覆盖标记都从行上读）。数据在弹窗开着
+ * 期间被刷新（目录刷新 / 别的写操作）时，行还在就跟着更新、行没了由弹窗
+ * 自己提示（它拿不到上下文了）。
+ */
+export type CapabilityContext = { provider: string; id: string }
 
 type Filters = { provider: string; state: string; search: string }
 
@@ -73,6 +80,10 @@ export type SharedWindow = {
     removeModelMapping(alias: string, target: string, provider: string): Promise<ManageView | null | undefined>
     addCustomModel(provider: string, id: string): Promise<ManageView | null | undefined>
     removeCustomModel(provider: string, id: string): Promise<ManageView | null | undefined>
+    /** 能力位覆盖（只服务内置家；自定义家走 wbModelsCustom.setCapabilities） */
+    setModelCapabilities(
+      provider: string, id: string, patch: Record<string, number | boolean | null>,
+    ): Promise<ManageView | null | undefined>
   }
   wbApp?: {
     toast?: (message: string, kind?: 'err' | 'ok') => void
@@ -171,6 +182,11 @@ const COLUMNS: ColumnDecl[] = [
   { key: 'model', label: '上游模型' },
   { key: 'rate', label: '倍率' },
   { key: 'source', label: '来源' },
+  // 能力位两列（顺序、文案与 model-capability 的键序对应）：数值合并在
+  // 「上下文 / 输出」一格里，三个布尔合并成一列徽章 —— 分成五列会把
+  // 复合控件最宽的「模型映射」列挤到不可用（列数取舍见交付说明）
+  { key: 'budget', label: '上下文 / 输出' },
+  { key: 'caps', label: '能力' },
   { key: 'alias', label: '模型映射' },
   { key: 'act', label: '操作', align: 'right' },
 ]
@@ -203,6 +219,8 @@ export type PanelState = {
   mapping: MappingContext | null
   /** 添加模型弹窗的上下文；null = 关着 */
   customModel: CustomModelContext | null
+  /** 能力弹窗的上下文；null = 关着 */
+  capability: CapabilityContext | null
 }
 
 /**
@@ -238,6 +256,7 @@ let snapshot: PanelState = {
   pending: new Set<string>(),
   mapping: null,
   customModel: null,
+  capability: null,
 }
 
 /** 快照的订阅者（当前只有页面那一个 root） */
@@ -600,6 +619,26 @@ export async function writeRemoveModel(provider: string, id: string): Promise<un
   return api.removeCustomModel(provider, id)
 }
 
+/**
+ * 保存一条模型的能力位覆盖（两个数据源各走各的写路径，与 `writeBinding` 同一条分流）：
+ *   · 自定义家：记录里整表提交（`customSource.setCapabilities`）；
+ *   · 内置家：`POST /api/models/capabilities`（覆盖层落在 `modelRules.capabilities`，
+ *     清单出口统一应用，见后端 `model_rules` 的「能力位覆盖」）。
+ *
+ * `capabilities` 是**全量五键**（弹窗一次提交全部）：`null` = 恢复继承 / 清除、
+ * 有值 = 覆盖 —— 与后端那条接口的三态协议同源。
+ */
+export async function writeCapabilities(
+  provider: string,
+  id: string,
+  capabilities: Record<string, number | boolean | null>,
+): Promise<unknown> {
+  if (customSource.isCustom(provider)) return customSource.setCapabilities(provider, id, capabilities)
+  const api = shared().workbuddyDesktop
+  if (!api) throw new Error('后端桥不可用')
+  return api.setModelCapabilities(provider, id, capabilities)
+}
+
 /* ─── 行内操作 ───────────────────────────────── */
 
 /**
@@ -745,6 +784,42 @@ export function openCustomModel(): void {
 
 export function closeCustomModel(): void {
   patch({ customModel: null })
+}
+
+/**
+ * 打开能力弹窗（表格的「上下文 / 输出」与「能力」两列，点格子即入口）。
+ * 上下文只带 `(provider, id)`：弹窗打开期间数据可能被刷新，生效值从当前
+ * 快照里现读（见 `modelRowOf`），不把值拷进上下文。
+ */
+export function openCapability(provider: string, id: string): void {
+  patch({ capability: { provider, id } })
+}
+
+export function closeCapability(): void {
+  patch({ capability: null })
+}
+
+/**
+ * 按 `(provider, id)` 取一行模型（能力弹窗读生效值 / 覆盖标记 / 展示名）。
+ *
+ * id 忽略大小写（与全仓的模型名比对口径一致）；行不在（目录刷新后模型
+ * 消失、自定义家被删）返回 null，由弹窗提示 + 关闭。
+ */
+export function modelRowOf(provider: string, id: string): ManageModel | null {
+  return models().find(model => (model.provider || '') === provider && same(model.id, id)) || null
+}
+
+/**
+ * 提供商的展示名：自定义家走目录缓存里的记录名，内置家走注册表，都没有时
+ * 回落 id。直接印 provider id 时自定义家会显示成一串 `custom-3f2a91b04c7e`，
+ * 用户认不出是哪一家。
+ */
+export function providerLabelOf(provider: string): string {
+  if (customSource.isCustom(provider)) {
+    const name = customSource.record(provider)?.name
+    return (typeof name === 'string' && name) || provider
+  }
+  return shared().wbProviders?.labelOf?.(provider) || provider
 }
 
 /**

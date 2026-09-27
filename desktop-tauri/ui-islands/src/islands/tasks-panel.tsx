@@ -158,7 +158,11 @@ type SharedWindow = {
   }
   wbRequestsPanel?: { applyAutoRefresh?: (task: IntervalTask | null) => unknown }
   wbReport?: { applyAutoRefresh?: (task: IntervalTask | null) => unknown }
-  wbAccountsView?: { syncBalancesSnapshot?: () => unknown }
+  wbAccountsView?: {
+    syncBalancesSnapshot?: () => unknown
+    /** 签到后把余额读数重新查一遍（账号页的动作层，静默：不弹 toast、结果落在余额列上） */
+    refreshUsageAfterCheckin?: (id?: string | null) => unknown
+  }
 }
 
 function shared(): SharedWindow {
@@ -632,8 +636,11 @@ function TasksPanel() {
       }
       // run 的响应把 state 合并进来了（见 api::auto_checkin::run_now），不必再跑一趟 GET
       if (result) setCheckin(result)
-      // 积分可能已变化，顺带刷新账号页的余额展示
       await shared().wbApp?.refresh?.()
+      // 积分可能已变化，让账号页把余额读数重新查一遍 —— refresh 只重拉账号列表，
+      // 余额读数是账号页自己缓存里的，不查它还是签到前的旧值（不 await：那是
+      // 后台的一次静默刷新，不该让这颗按钮一直转着）
+      void shared().wbAccountsView?.refreshUsageAfterCheckin?.()
     } catch (error) {
       toast(`签到失败：${errorMessage(error)}`, 'err')
       setCheckin(await api.getAutoCheckin().catch(() => null))

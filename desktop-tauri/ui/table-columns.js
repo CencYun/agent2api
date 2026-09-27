@@ -16,9 +16,23 @@
  * 从别处扣：拖前面的列后面的变窄、拖后面的列前面的变窄，两边互相牵制，**永远
  * 拖不宽**。要滚动就让它滚，比互相挤压好解释得多。
  *
- * ── 实测过的两条事实（Chrome，table-layout: fixed）──────────────
+ * ── 拖动一律可以拖出容器（本次统一）────────────────────────────
+ * 上面那条「不一定成立」原先只落在 grid 模式上：table 模式另有一套上限，算的是
+ * 「其余列各按 56px 下限占掉之后还剩多少」——于是拖宽一列时旁边的列一起变窄、
+ * 表格总宽纹丝不动、也就永远没有横向滚动条。用户看到的观感是**这张表拖不动**
+ * （模型管理与请求日志的行为不一致，正是这次要修的东西）。现在两种模式同一套：
+ *   · 上限只做防呆：两倍可用宽度（再宽就该换窗口了），拖动不再被容器卡住；
+ *   · table 模式把「固定列 + 其余列各 56px」写成表格的 min-width，其余列让到
+ *     下限就不再让，多出来的部分交给容器的横向滚动条 —— 列不会被压成 0 宽
+ *     （实测：不写 min-width 时其余列会被压成 0，表头直接消失）。
+ *   grid 模式不需要这一步：行宽下限由渲染方算好写在 --req-row-min 上
+ *   （见 page-requests.css 的 #req-list）。
+ *
+ * ── 实测过的三条事实（Chrome，table-layout: fixed）──────────────
  * · 全是 px 且总和小于容器 → 浏览器按原比例放大填满，不会留空；
- * · px 与 % 混用 → % 列按权重吃掉剩余宽度，只有 px 列本身超宽时表格才横向滚动。
+ * · px 与 % 混用 → % 列按权重吃掉**剩余**宽度（px 列先扣掉）；
+ * · 表格 min-width 大于容器时，% 列按「min-width − px 列之和」的权重分，
+ *   整张表溢出容器 → 横向滚动，且各列都还看得见。
  *
  * ── 两种表格形态 ──────────────────────────────────────────────
  * · table 模式（模型管理 / 网关 Key）：<table> + <colgroup>，宽度写回 <col>。
@@ -27,10 +41,18 @@
  *   轨道列表写成**容器上的 CSS 变量**（--req-cols），靠继承作用到每一行 ——
  *   重绘出来的新行自动拿到同一套轨道，渲染方一行都不用改。
  *
- * ── 把手为什么最后一列不放（table 模式）────────────────────────
- * 把手按 right: -4px 定位（让竖线正好压住列边界），钉在表格右缘会顶出一条横向
- * 滚动条（实测 scrollWidth 比 clientWidth 大 4px）。账号表也是这么处理的。
- * 请求日志的最后一列落在容器内边距里（左右各 14px），不存在这个问题，所以照放。
+ * ── 把手的定位与末列 ──────────────────────────────────────────
+ * 把手按 right: -4px 定位（让竖线正好压住列边界），钉在表格最右缘会顶出一条
+ * 横向滚动条（实测 scrollWidth 比 clientWidth 大 4px），所以末列改用
+ * `.col-grip-end`（right: 0，往内让 4px）。早先的做法是「末列干脆不给把手」，
+ * 代价是模型管理 / 网关 Key 的最后一列拖不了 —— 与请求日志（末列有容器内边距、
+ * 照常给把手）又不一致，现在统一成「末列也有把手，只是往里挪」。
+ *
+ * ── 自动接入（本次新增）───────────────────────────────────────
+ * 注册时 root 还不存在（React 岛还没提交首帧、弹窗还没打开）不再是「必须由渲染方
+ * 补一次 repaint()」：register 会挂一个「等它出现」的观察者，root 一出现就自己
+ * 完成 恢复列宽 / 补把手 / 绑事件。渲染方那侧的 repaint 调用保留即可（幂等），
+ * 但不再是非做不可的事 —— 漏调一次就整张表拖不动的坑，到此为止。
  *
  * 默认宽度在两处：CSS 里的 width / grid-template-columns（没拖过的列走它）与下面
  * TABLES 里各列的 track（拖动时整条轨道列表以它为底）。改默认列宽时两处要同步。
@@ -45,7 +67,9 @@
   const FIXED_TRACK = /^(\d+(?:\.\d+)?)px$/;
 
   const GRIP_CLASS = 'col-grip';
-  const GRIP_HTML = `<span class="${GRIP_CLASS}" title="拖动调整列宽（双击还原）"></span>`;
+  /** 末列的把手（往内让 4px，见模块头的「把手的定位与末列」） */
+  const GRIP_END_CLASS = 'col-grip-end';
+  const gripHtml = end => `<span class="${GRIP_CLASS}${end ? ` ${GRIP_END_CLASS}` : ''}" title="拖动调整列宽（双击还原）"></span>`;
 
   /**
    * 六张表的登记：columns 的顺序就是列顺序。
@@ -55,11 +79,12 @@
    * · grid 模式：给表头单元格的选择器 sel 与默认轨道 track（与 page-requests.css
    *   的 grid-template-columns 一一对应），varName 是写到容器上的变量名。
    * · 「获取模型」弹窗的两张表是**动态表**：注册时元素还不存在（弹窗未开），
-   *   恢复 / 补把手 / 绑定都在弹窗每次重建表头后的 repaint 里发生（见下）。
+   *   恢复 / 补把手 / 绑定等它出现后由 awaitRoot 自己完成（见下），弹窗每次重建
+   *   表头后的 repaint 也算一路（幂等）。
    *
    * ── columnsOf：列设置与列宽的同源 ─────────────────────────────
    * 四张表都接了列设置（能藏列、能换顺序），而列宽这一层有多处要按**当前可见列**
-   * 算：覆盖值落到哪个 <col>、轨道列表有几条、以及「末列不给把手」。各自的
+   * 算：覆盖值落到哪个 <col>、轨道列表有几条、末列的把手该不该往里挪。各自的
    * columnsOf 从那张表的渲染模块取可见列，再用本登记的列对象对齐 —— 本登记是
    * 列宽（track / 默认宽度）的权威，列设置那头只管显隐与顺序，两者同一个答案。
    * 取不到（脚本未加载、表格还没就绪）就退回全部列，行为与接入前一致。
@@ -76,7 +101,7 @@
       id: 'models',
       mode: 'table',
       root: '.page[data-page="gateway"] table.models-table',
-      columns: ['model', 'rate', 'source', 'alias', 'act'].map(key => ({ key })),
+      columns: ['model', 'rate', 'source', 'budget', 'caps', 'alias', 'act'].map(key => ({ key })),
       columnsOf: visibleColumnsOf(() => window.wbModelsPanel?.visibleColumns?.()),
     },
     {
@@ -215,6 +240,12 @@
         if (width) col.style.width = width + 'px';
         else col.style.removeProperty('width');
       }
+      // 表格的宽度下限：固定列（拖过的 + 默认就写死像素的）加上其余列各自的
+      // 56px 兜底（**合计**下限，见 tableMinWidthOf）。容器更宽时它不起作用
+      // （width: 100% 更大）；只有拖动把总宽顶出容器之后，它才让其余列停在
+      // 兜底份额上，多出来的部分交给横向滚动条 —— 不写它的话其余列会被压成
+      // 0 宽（见模块头的实测记录）。
+      root.style.minWidth = tableMinWidthOf(table, activeColumns(table)) + 'px';
       return;
     }
 
@@ -250,11 +281,10 @@
   /**
    * 表头里补把手，并把不该留的摘掉。
    *
-   * 「哪一列在最后」跟着列设置走（末列不给把手，见模块头），所以每次列集合
-   * 变化都要重新对一遍：藏列 / 换顺序之后，上一轮插下的把手会跟着它所在的
-   * <th> 一起留着 —— 那一列可能已经不是末列（该有把手却没有），也可能原本
-   * 有把手的那一列变成了末列（把手顶出横向滚动条）。已有的不重复插，
-   * 所以重绘后反复调用是安全的。
+   * 「哪一列在最后」跟着列设置走（末列的把手要换成往里挪的那一档，见模块头），
+   * 所以每次列集合变化都要重新对一遍：藏列 / 换顺序之后，上一轮插下的把手会跟着
+   * 它所在的 <th> 一起留着 —— 那一列可能已经不是末列（该换成普通把手）、也可能
+   * 原本普通的那一列变成了末列。已有的不重复插，所以重绘后反复调用是安全的。
    */
   function paintGrips(table) {
     const root = rootOf(table);
@@ -266,37 +296,47 @@
       const column = columnOfCell(table, root, grip.parentElement);
       // 认不出所属列（列表头被重绘过）→ 留着，由渲染方那边的重绘逻辑接管
       if (!column) continue;
-      // 表格模式下末列不给把手：它 right: -4px 定位，钉在表格右缘会顶出横向滚动条
-      if (table.mode === 'table' && column === last) grip.remove();
+      // 末列（仅 table 模式）的把手要往里挪：表格右缘顶一个 -4px 的把手会凭空
+      // 多出 4px 横向溢出（见模块头）。普通列反过来要摘掉往里那一档。
+      if (table.mode !== 'table') continue;
+      const end = column === last;
+      if (end !== grip.classList.contains(GRIP_END_CLASS)) grip.remove();
     }
 
     columns.forEach((column, index) => {
-      if (table.mode === 'table' && index === columns.length - 1) return;
       const cell = headCellOf(table, root, column);
       if (!cell || cell.querySelector(`:scope > .${GRIP_CLASS}`)) return;
-      cell.insertAdjacentHTML('beforeend', GRIP_HTML);
+      cell.insertAdjacentHTML('beforeend', gripHtml(table.mode === 'table' && index === columns.length - 1));
     });
   }
 
   // ─── 拖动 ────────────────────────────────────
 
-  /**
-   * 其余列至少要占掉的宽度（只给 table 模式的宽度上限用）：
-   * · 拖过的列 → 它自己的像素值，已经钉死；
-   * · 没拖过、但默认轨道本身就是固定像素的列 → 也按它的像素值扣；
-   * · 其余（表格模式的百分数列）→ 只留 MIN_WIDTH 兜底：会被按比例压扁，
-   *   但不能压到看不见。
-   * grid 模式不用它 —— 那儿的列宽是绝对量，超出容器交给横向滚动。
-   */
-  function reservedOf(table, column) {
-    const fixed = FIXED_TRACK.exec(table.mode === 'grid' ? column.track : '');
-    return fixed ? Math.max(MIN_WIDTH, Math.round(parseFloat(fixed[1]))) : MIN_WIDTH;
-  }
-
   /** 默认轨道里的像素值（弹性轨道没有，返回 0） */
   function fixedPxOf(table, column) {
     const fixed = FIXED_TRACK.exec(table.mode === 'grid' ? column.track || '' : '');
     return fixed ? Math.round(parseFloat(fixed[1])) : 0;
+  }
+
+  /**
+   * 表格的宽度下限（table 模式的 min-width，见 paint）：
+   * 拖过的列按覆盖值，其余列各按「默认像素（若有）与 56px 里的大者」。
+   *
+   * 百分数列没有「固有最小宽度」这回事（CSS 里只有 25% 这种相对量），所以给它
+   * 一个统一的 56px 兜底 —— 与 MIN_WIDTH 同一个语义：再窄就点不准里面的控件了。
+   *
+   * 注意这是**合计**下限，不是「每一列都不低于 56px」：多出来的宽度仍按各列的
+   * 百分数权重分给它们（实测：25/7/8/48/12 的五列在 900px 的容器里，剩 224px 时
+   * 7% 的那列拿到 30px）。与请求日志（grid 模式）的弹性列被压扁是同一种取舍 ——
+   * 拖得极端时窄列会被压到只剩省略号，想让它恢复就把把手双击还原。
+   */
+  function tableMinWidthOf(table, columns) {
+    const { overrides } = stateOf(table);
+    let min = 0;
+    for (const column of columns) {
+      min += overrides[column.key] || Math.max(MIN_WIDTH, fixedPxOf(table, column));
+    }
+    return Math.round(min);
   }
 
   /**
@@ -324,24 +364,17 @@
   /**
    * 被拖这一列的宽度上限。
    *
-   * grid 模式**不设「容器宽度」这种硬墙**：列宽是绝对量，拖多宽就多宽，装不下的
-   * 部分交给整张表横向滚动。上限只做防呆，取两倍可用宽度（再宽就该拆列或者换
-   * 窗口了）。
-   * 原先这里算的是「其余列按各自的预留下限占掉之后还剩多少」，而不会伸缩的列
-   * 本身就能把容器占满 —— 差值恒为负、上限退化成当前宽度，拖动整个失效（请求
-   * 日志「错误列拖不动」就是这一条）。
+   * 两种模式**同一套**（本次统一，见模块头）：不设「容器宽度」这种硬墙 ——
+   * 列宽是绝对量，拖多宽就多宽，装不下的部分交给整张表横向滚动。上限只做防呆，
+   * 取两倍可用宽度（再宽就该拆列或者换窗口了）。
    *
-   * table 模式（模型管理 / 网关 Key）的其余列是百分数，会跟着被拖列自动让位，
-   * 所以仍按预留下限算，行为与接入前一致。
+   * table 模式原先算的是「其余列按各自的预留下限占掉之后还剩多少」，而不会伸缩的
+   * 列本身就能把容器占满 —— 差值恒为负、上限退化成当前宽度，拖动整个失效
+   * （模型管理页「拖不动」就是这一条；请求日志的「错误列拖不动」是同一个成因，
+   * 那边先修过）。保留起见也记一句：那条路和上面「别写成重新分配」的教训是同一个。
    */
   function limitOf(table, total, key, startWidth) {
-    if (table.mode === 'grid') return Math.max(MIN_WIDTH, Math.round(total * 2), Math.round(startWidth));
-    const { overrides } = stateOf(table);
-    const others = activeColumns(table).reduce((sum, column) => (
-      column.key === key ? sum : sum + (overrides[column.key] || reservedOf(table, column))
-    ), 0);
-    // 不允许低于当前宽度：现状是上一轮拖动留下的，往回缩一下更难看
-    return Math.max(MIN_WIDTH, Math.round(total - others), Math.round(startWidth));
+    return Math.max(MIN_WIDTH, Math.round(total * 2), Math.round(startWidth));
   }
 
   const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
@@ -450,37 +483,75 @@
   }
 
   /**
-   * 给「注册时 root 还不存在」的表补上重绘观察者 —— 表的渲染方每重建一次表头都会
-   * 把把手一起换掉，不看着点就再也补不回来。
+   * 观察一张表的 root：表头每次被重建（React 重渲染、列设置就地重排）都会把把手
+   * 一起换掉，不看着点就再也补不回来；列宽覆盖值也要重新落到新的 <col> 上。
    *
-   * **前提是 root 已经在了**（这里先查一遍）。root 在注册那一刻不存在时，本文件
-   * 自己能做的都做完了（paint / paintGrips / bind / watch 全部空转），接下来必须由
-   * **渲染方**在渲染出表头之后调一次 `repaint(id)` —— 那条路才是这类表的入口。
-   * 踩过的坑：请求日志整表由 React 岛渲染、首帧异步提交，本文件加载期注册时
-   * `#req-list` 还不存在，这里连观察者都装不上，而岛那边只在挂载时补了一次
-   * （那时表头还没渲染出来），两头空转 → 整张表永远拖不动。
-   * 所以「动态渲染的表」这一条契约是强制的，不是兜底。
+   * 两种模式都装（原先只有 grid 模式）：table 模式的 tbody 会被整体重绘（换筛选、
+   * 轮询刷新），childList 一动就补一遍，成本只是几次幂等的 style 写入。
    *
-   * 观察者只对子节点变动触发；而 paint 写的是容器自身的 style，不会引发
-   * 子节点变动，所以不存在自激循环。对已有把手直接跳过，重复调用也安全。
+   * 观察者只对子节点变动触发；paint 写的是元素自身的 style 与 <col> 的 style，
+   * 都不是 childList 变动，所以不存在自激循环。对已有把手直接跳过，重复调用安全。
+   * 回调合并到下一帧：一次 React 提交会连着来几十条 mutation，合并后只重画一遍。
    */
   function watch(table) {
     if (typeof MutationObserver !== 'function') return;
     const root = rootOf(table);
     if (!root) return;
+    if (table.watchedRoot === root) return;
+    table.watchedRoot = root;
+    let pending = false;
     new MutationObserver(() => {
-      paint(table);
-      paintGrips(table);
+      if (pending) return;
+      pending = true;
+      const flush = () => { pending = false; paint(table); paintGrips(table); };
+      // rAF 在后台标签页不跑；没有它（或页面被挂起）时退回微任务，别漏掉这一轮
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(flush);
+      else Promise.resolve().then(flush);
     }).observe(root, { childList: true, subtree: true });
   }
 
-  /** 接入一张表：恢复列宽 → 补把手 → 绑事件（grid 模式再加一个重绘观察者） */
-  function register(table) {
-    TABLES.push(table);
+  /**
+   * 等 root 出现：注册那一刻表还没渲染出来（React 岛的首帧、弹窗里的表）时，
+   * 盯着文档等它挂上去，出现后立刻完成 恢复列宽 / 补把手 / 绑事件。
+   *
+   * 这一条是**兜底**：渲染方那侧仍可以在表头重建后调 `repaint(id)`（幂等），
+   * 但漏调不再等于「这张表永远拖不动」—— 那正是模型管理页与请求日志行为不一致的
+   * 一部分成因（请求日志踩过同一个坑，当时是靠渲染方补一次调用绕过的）。
+   */
+  function awaitRoot(table) {
+    if (typeof MutationObserver !== 'function') return;
+    if (table.awaiting) return;
+    table.awaiting = true;
+    let pending = false;
+    const observer = new MutationObserver(() => {
+      if (pending) return;
+      pending = true;
+      const flush = () => {
+        pending = false;
+        if (!rootOf(table)) return;
+        observer.disconnect();
+        table.awaiting = false;
+        attach(table);
+      };
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(flush);
+      else Promise.resolve().then(flush);
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+  }
+
+  /** 接入一张表：恢复列宽 → 补把手 → 绑事件 → 装上重绘观察者 */
+  function attach(table) {
+    bind(table);
     paint(table);
     paintGrips(table);
-    bind(table);
-    if (table.mode === 'grid') watch(table);
+    watch(table);
+  }
+
+  /** 注册：root 在就立刻接入，不在就等它出现（见 awaitRoot） */
+  function register(table) {
+    TABLES.push(table);
+    if (rootOf(table)) attach(table);
+    else awaitRoot(table);
   }
 
   for (const table of TABLES.slice()) register(table);
@@ -489,18 +560,16 @@
    * 按 id 重画某张表：列设置改了显隐 / 顺序之后调它。
    *
    * 列宽与把手两件事都要重对一遍 —— 轨道条数（grid 模式）、覆盖值落到哪个
-   * <col>（table 模式）、以及「末列不给把手」这条规则，全都按当前可见列算。
+   * <col>（table 模式）、以及「末列把手往里挪」这条规则，全都按当前可见列算。
    *
-   * 也负责**补绑**：动态表（弹窗）注册时 root 还不存在，绑定要等到弹窗渲染
-   * 之后 —— 所以渲染方每次重建表头（把手随表头一起没了）后调一次本函数，
-   * 恢复列宽、补把手、绑事件三件事一次到位（见 bind 的说明）。
+   * 也负责**补绑**：动态表（弹窗）的表头被重建之后，绑定与把手要重来一遍
+   * （见 attach）。渲染方调它即可 —— 但漏调也有 awaitRoot / watch 兜底。
    */
   function repaint(id) {
     const table = TABLES.find(item => item.id === id);
     if (!table) return;
-    bind(table);
-    paint(table);
-    paintGrips(table);
+    if (!rootOf(table)) { awaitRoot(table); return; }
+    attach(table);
   }
 
   // 供别处重画用（表格自己重绘了列宽骨架时调一次）

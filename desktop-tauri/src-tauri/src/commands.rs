@@ -637,6 +637,36 @@ pub fn set_window_theme(app: AppHandle, theme: Option<String>) -> Result<(), Str
     window.set_theme(theme).map_err(|error| format!("设置窗口主题失败: {error}"))
 }
 
+/// 设置主窗口的界面缩放（浏览器缩放同款：整体缩放整页，含布局与字号）。
+///
+/// 因子走 Tauri 的 `set_zoom` —— Windows 上是 WebView2 的 ZoomFactor，语义与
+/// 用户按 Ctrl +/- 一致（不是 CSS zoom：那个只改布局，还会和 WebView 缩放叠加）。
+/// 界面上是「百分比下拉」（设置页「显示 → 界面缩放」，80%–130%、一档 5%），
+/// 这里再把关口收一遍：渲染层传来的值不信任 —— 非有限值拒绝、范围外直接报错
+/// （不静默夹取，免得界面显示 130% 而实际是别的值）。
+///
+/// 返回值是**实际生效的因子**（规整到两位小数），界面拿它回写显示。缩放的
+/// 持久化在前端 localStorage，壳这侧不记账（与窗口主题同一口径：壳只执行动作，
+/// 偏好由界面自己记）。
+#[tauri::command]
+pub fn set_zoom(app: AppHandle, scale: f64) -> Result<f64, String> {
+    const MIN: f64 = 0.8;
+    const MAX: f64 = 1.3;
+    if !scale.is_finite() {
+        return Err(format!("界面缩放值非法: {scale}"));
+    }
+    // 先规整再比范围：0.95 这类因子在浮点里是 0.9499999…，直接比大小会把 95% 误判出界
+    let factor = (scale * 100.0).round() / 100.0;
+    if !(MIN..=MAX).contains(&factor) {
+        return Err(format!("界面缩放需在 80%–130% 之间（收到 {:.0}%）", factor * 100.0));
+    }
+    let window = main_window(&app)?;
+    window
+        .set_zoom(factor)
+        .map_err(|error| format!("设置界面缩放失败: {error}"))?;
+    Ok(factor)
+}
+
 // ── 自定义标题栏的窗口三键 ─────────────────────────────────────
 // 主窗口已去掉系统装饰（见 lib.rs 建窗处的 `.decorations(false)`，参考
 // OmniProxy 的自定义标题栏），最小化 / 最大化 / 关闭改由界面自绘的标题栏
