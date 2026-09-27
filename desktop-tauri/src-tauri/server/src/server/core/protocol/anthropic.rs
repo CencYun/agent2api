@@ -147,7 +147,8 @@ fn last_cache_control(parts: &[Value]) -> Option<Value> {
 ///
 /// 之所以可能拆成两条：Anthropic 把 tool_result 放在 user 消息的 content 块里，
 /// 而 Chat 要求 tool 结果独立成 `role:"tool"` 消息。一条 user 消息里若既有
-/// 文本又有 tool_result，就要拆成「tool 消息」+「user 消息」。
+/// 文本又有 tool_result，就要拆成「tool 消息」+「user 消息」—— **顺序不能反**：
+/// 下游两条协议都要求结果紧跟发起调用的 assistant（理由见本函数内「工具结果」一段）。
 fn convert_message(messages: &mut Vec<Value>, message: &Value) -> Result<(), ConvertError> {
     let role = string_field(message, "role").to_lowercase();
     if role != "user" && role != "assistant" {
@@ -232,6 +233,43 @@ fn convert_message(messages: &mut Vec<Value>, message: &Value) -> Result<(), Con
 
     let chat_role = if role == "assistant" { "assistant" } else { "user" };
 
+    // 工具结果：每条独立成 tool 消息，且必须排在**本消息正文之前**。
+    //
+    // Anthropic 允许同一条 user 消息里既带 tool_result 又带正文（Claude Desktop
+    // 加载 skill 的注入形态），但下游两条协议都要求结果先落地：Chat 侧 tool 消息
+    // 必须紧跟发起调用的 assistant（中间插任何消息都算配对断裂，上游判 11148
+    // "tool calls and tool results do not match"），Anthropic 侧 tool_result 必须
+    // 在 user 内容块最前（否则报 "Did not find 1 tool_result block(s) at the
+    // beginning of this message"）。Anthropic 自身的规范顺序同样是 tool_result
+    // 在前、正文在后 —— 先推正文会把用户消息插进 assistant 与其结果之间，
+    // 严格上游因此对之后每条请求都 400，整条会话报废。
+    for (index, result) in tool_results.iter().enumerate() {
+        let tool_use_id = string_field(result, "tool_use_id");
+        let output = result.get("content").unwrap_or(&Value::Null);
+        // is_error 是「这次工具执行失败了」的显式标记：丢掉后模型会把失败
+        // 结果当正常输出继续推理。挂在内部暂存字段上，由 anthropic 出站
+        // 恢复；OpenAI 形出口没有这个概念，随 strip 剥离。
+        let is_error = result.get("is_error").and_then(Value::as_bool) == Some(true);
+        let cache = tool_result_caches.get(index).cloned().flatten();
+        let mut entry = Map::new();
+        entry.insert("role".to_string(), Value::String("tool".to_string()));
+        entry.insert(
+            "tool_call_id".to_string(),
+            Value::String(if tool_use_id.is_empty() { random_id("call") } else { tool_use_id }),
+        );
+        entry.insert(
+            "content".to_string(),
+            Value::String(tool_result_text(output)),
+        );
+        if is_error {
+            entry.insert(FIELD_IS_ERROR.to_string(), Value::Bool(true));
+        }
+        if let Some(cache) = cache {
+            entry.insert(FIELD_CACHE_CONTROL.to_string(), cache);
+        }
+        messages.push(Value::Object(entry));
+    }
+
     // 工具调用：必须挂在 assistant 消息上（Anthropic 的 tool_use 只在 assistant 里）
     if !tool_calls.is_empty() {
         let mut entry = Map::new();
@@ -263,34 +301,6 @@ fn convert_message(messages: &mut Vec<Value>, message: &Value) -> Result<(), Con
             entry.insert("reasoning_content".to_string(), Value::String(reasoning));
         }
         if let Some(cache) = normal_cache {
-            entry.insert(FIELD_CACHE_CONTROL.to_string(), cache);
-        }
-        messages.push(Value::Object(entry));
-    }
-
-    // 工具结果：每条独立成 tool 消息（紧跟上面的 assistant，顺序正确）
-    for (index, result) in tool_results.iter().enumerate() {
-        let tool_use_id = string_field(result, "tool_use_id");
-        let output = result.get("content").unwrap_or(&Value::Null);
-        // is_error 是「这次工具执行失败了」的显式标记：丢掉后模型会把失败
-        // 结果当正常输出继续推理。挂在内部暂存字段上，由 anthropic 出站
-        // 恢复；OpenAI 形出口没有这个概念，随 strip 剥离。
-        let is_error = result.get("is_error").and_then(Value::as_bool) == Some(true);
-        let cache = tool_result_caches.get(index).cloned().flatten();
-        let mut entry = Map::new();
-        entry.insert("role".to_string(), Value::String("tool".to_string()));
-        entry.insert(
-            "tool_call_id".to_string(),
-            Value::String(if tool_use_id.is_empty() { random_id("call") } else { tool_use_id }),
-        );
-        entry.insert(
-            "content".to_string(),
-            Value::String(tool_result_text(output)),
-        );
-        if is_error {
-            entry.insert(FIELD_IS_ERROR.to_string(), Value::Bool(true));
-        }
-        if let Some(cache) = cache {
             entry.insert(FIELD_CACHE_CONTROL.to_string(), cache);
         }
         messages.push(Value::Object(entry));
