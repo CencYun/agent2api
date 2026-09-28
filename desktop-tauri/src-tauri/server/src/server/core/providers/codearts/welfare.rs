@@ -529,9 +529,23 @@ pub async fn refresh_usage(store: &AccountStore, account_id: &str, now_ms: i64) 
         chat::DEFAULT_PLUGIN_VERSION,
     )
     .await;
-    let (statistics, benefit) = (statistics.ok(), benefit.ok());
+    // 形状与 `query_usage` 保持一致：福利那一侧的三种状态分开落
+    // （读到 → wallets；上游明说没有 → benefitAbsent；读失败 → benefitError）。
+    // 「领到了积分」与「有福利模型额度」是两本账 —— 后者没有不代表领取失败。
+    let benefit_absent = matches!(&benefit, Ok(None));
+    let benefit_value = benefit.as_ref().ok().and_then(|value| value.as_ref());
     let _ = now_ms;
-    balance::usage_document(statistics.as_ref(), benefit.as_ref())
+    let mut document = balance::usage_document(statistics.as_ref().ok(), benefit_value);
+    if benefit_absent {
+        document["benefitAbsent"] = Value::Bool(true);
+    }
+    if let Err(error) = &statistics {
+        document["statisticsError"] = Value::String(error.message.clone());
+    }
+    if let Err(error) = &benefit {
+        document["benefitError"] = Value::String(error.message.clone());
+    }
+    document
 }
 
 #[cfg(test)]

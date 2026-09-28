@@ -373,7 +373,10 @@ impl ProviderAdapter for CodeArtsAdapter {
                 chat::DEFAULT_PLUGIN_VERSION,
             )
             .await;
-            let (statistics, benefit) = (statistics, benefit);
+            // 两边都失败才算整次失败（一边失败不抹掉另一边）。
+            // 注意「无福利」（`Ok(None)`）不是失败 —— 它是账号的正常状态
+            // （福利按活动下发，Free 账号常常没有），见 balance.rs 的
+            // `BENEFIT_ABSENT_CODE`。
             if statistics.is_err() && benefit.is_err() {
                 let (first, second) = (statistics.unwrap_err(), benefit.unwrap_err());
                 return Err(GatewayError::with_status(
@@ -381,9 +384,18 @@ impl ProviderAdapter for CodeArtsAdapter {
                     format!("{}（福利网关：{}）", first.message, second.message),
                 ));
             }
-            let mut document = balance::usage_document(statistics.as_ref().ok(), benefit.as_ref().ok());
-            if let Err(error) = &benefit {
-                document["benefitError"] = Value::String(error.message.clone());
+            let benefit_value = benefit.as_ref().ok().and_then(|value| value.as_ref());
+            let mut document = balance::usage_document(statistics.as_ref().ok(), benefit_value);
+            match &benefit {
+                // 上游明说没有该账号的福利数据：落一个**中性**标记而不是错误，
+                // 界面上「没有福利」与「没读到」才分得开（前者不该报警告）。
+                Ok(None) => {
+                    document["benefitAbsent"] = Value::Bool(true);
+                }
+                Ok(Some(_)) => {}
+                Err(error) => {
+                    document["benefitError"] = Value::String(error.message.clone());
+                }
             }
             if let Err(error) = &statistics {
                 document["statisticsError"] = Value::String(error.message.clone());

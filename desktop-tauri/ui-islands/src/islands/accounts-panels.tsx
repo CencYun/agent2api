@@ -316,10 +316,18 @@ function usageSummary(entry: UsageEntry): { text: string; kind: string; title: s
       data.statisticsError ? `订阅统计未读到：${String(data.statisticsError)}` : '',
       data.benefitError ? `福利网关未读到：${String(data.benefitError)}` : '',
     ].filter(Boolean)
+    // ── 「没有福利」不是「没读到」────────────────────────────────
+    // 上游对没有福利池的账号（福利按限时活动下发，Free 账号常常没有）回
+    // `4004 benefit not found`，后端把它翻成 `benefitAbsent` 而不是错误。
+    // 这里只在中性说明里提一句 —— 不动 kind、不加 ⚠：它回答的是「为什么
+    // 这行没有福利读数」，不是一个需要用户去查的问题。
+    const absent = data.benefitAbsent
+      ? ['该账号没有福利模型额度（福利按活动下发，不是每个账号都有）']
+      : []
     return {
       text: available + (missing.length ? ' ⚠' : ''),
       kind: missing.length ? 'warn' : 'ok',
-      title: [available, detail, subscription, ...missing].filter(Boolean).join(' · '),
+      title: [available, detail, subscription, ...absent, ...missing].filter(Boolean).join(' · '),
     }
   }
   return { text: '无数据', kind: 'muted', title: '未返回可识别的余额数据' }

@@ -36,6 +36,19 @@ pub const STATISTICS_PATH: &str = "/snap-manager/v1/statistics/plugin";
 /// 福利池余额（另一个网关）。
 pub const BENEFIT_BALANCE_PATH: &str = "/api/v1/user/tokens/balance";
 
+/// 福利网关的「该账号没有福利数据」业务码。
+///
+/// 实测（Free 套餐账号）：GET 该端点回 HTTP 200 + `{"error_code":"4004",
+/// "error_msg":"benefit not found"}` —— 这**不是查询失败**，是上游明说
+/// 「这个账号没有福利池」（福利是限时活动下发的，不是每个账号都有；而
+/// 每日福利领到的套餐赠送积分进的是另一本账，见模块头）。
+/// 把它当失败渲染成「福利网关未读到」会让用户去查一个不存在的问题，
+/// 所以解析层把它翻成 `Ok(None)`（第三种状态），与「没读到」分开。
+const BENEFIT_ABSENT_CODE: &str = "4004";
+/// 同一条的文案兜底（码可能换、文案还没换；两条都命中才算「没有福利」，
+/// 避免 4004 将来承载别的语义时被误判成「无福利」而掩盖真错误）。
+const BENEFIT_ABSENT_MARKER: &str = "benefit not found";
+
 /// 一个计量表。`credit_*` 三项是「套餐赠送积分」口径，`used/allowance_tokens`
 /// 是 token 口径 —— 上游按指标类型给其中一组，另一组留空。
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -299,7 +312,10 @@ fn quota_meter_label(name: &str) -> Option<String> {
 ///
 /// 签名口径与区域 API **不同**：带 Host、**不带 `X-Domain-Id`**（参考实现把
 /// `DomainID` 清空后再签）。开发者网关不是区域活动服务，两套契约不能混用。
-pub async fn fetch_benefit_balance(gateway: &str, credential: &Credential) -> Result<BenefitBalance, GatewayError> {
+///
+/// 返回 `Ok(None)` = 上游明说「该账号没有福利数据」（见 `BENEFIT_ABSENT_CODE`），
+/// 与「读取失败」（`Err`）分开 —— 界面才能把「没有福利」和「没读到」分得开。
+pub async fn fetch_benefit_balance(gateway: &str, credential: &Credential) -> Result<Option<BenefitBalance>, GatewayError> {
     let url = format!("{}{BENEFIT_BALANCE_PATH}", trim(gateway));
     let headers = statistics_headers(chat::DEFAULT_LANGUAGE, chat::DEFAULT_PLUGIN_VERSION);
     let (status, body) = signed_get(&url, &headers, credential, true, true).await?;
@@ -310,12 +326,22 @@ pub async fn fetch_benefit_balance(gateway: &str, credential: &Credential) -> Re
 }
 
 /// 福利网关的解析：**成功看 envelope，不看 HTTP 状态**。
-pub fn parse_benefit_balance(body: &str, credential: &Credential) -> Result<BenefitBalance, GatewayError> {
+///
+/// 三种结局：`Ok(Some)` 读到福利；`Ok(None)` 上游明说没有该账号的福利数据
+/// （`4004 benefit not found`，正常状态）；`Err` 才是真失败。
+pub fn parse_benefit_balance(body: &str, credential: &Credential) -> Result<Option<BenefitBalance>, GatewayError> {
     let parsed: Value = serde_json::from_str(body)
         .map_err(|error| GatewayError::with_status(502, format!("CodeArts 福利余额响应不是合法 JSON：{error}")))?;
     let code = parsed.get("error_code").and_then(Value::as_str).unwrap_or("");
     if code != "0000" {
         let message = parsed.get("error_msg").and_then(Value::as_str).unwrap_or("");
+        // 「没有福利数据」与「查询失败」是两回事：前者是账号的正常状态
+        // （福利按活动下发，Free 账号常常没有），后者才该冒到界面当警告。
+        // 码与文案**都**命中才算 —— 只认码的话，4004 将来承载别的语义时
+        // 会被静默吞成「无福利」；只认文案的话，换码就失效。
+        if code == BENEFIT_ABSENT_CODE && message.to_lowercase().contains(BENEFIT_ABSENT_MARKER) {
+            return Ok(None);
+        }
         return Err(GatewayError::with_status(
             502,
             format!("CodeArts 福利余额返回 {code}：{}", excerpt(message, credential)),
@@ -326,14 +352,14 @@ pub fn parse_benefit_balance(body: &str, credential: &Credential) -> Result<Bene
         .filter(|value| !value.is_null())
         .ok_or_else(|| GatewayError::with_status(502, "CodeArts 福利余额响应没有 result"))?;
     let number = |key: &str| result.get(key).and_then(Value::as_i64).unwrap_or(0);
-    Ok(BenefitBalance {
+    Ok(Some(BenefitBalance {
         channel: result.get("channel").and_then(Value::as_str).unwrap_or("").to_string(),
         daily_token_limit: number("daily_token_limit"),
         daily_tokens_used: number("daily_tokens_used"),
         monthly_token_limit: number("monthly_token_limit"),
         monthly_tokens_used: number("monthly_tokens_used"),
         total_balance: number("total_balance"),
-    })
+    }))
 }
 
 /// 一次余额查询 = **并发**打两个网关。
@@ -342,13 +368,16 @@ pub fn parse_benefit_balance(body: &str, credential: &Credential) -> Result<Bene
 /// 「自动额度刷新绝不能等另一台网关」。顺序写会把两家的往返时间相加，
 /// 而批量查询时每个账号都付一遍。返回的是两个 `Result`：
 /// **一边失败不抹掉另一边**（界面上「读到 0」与「没读到」必须分得开）。
+///
+/// 福利那一侧的 `Ok(None)` 是「上游明说没有该账号的福利数据」，不是失败也不是
+/// 读到 0 —— 三种状态在 `query_usage` 里分别落成 wallets / benefitAbsent / benefitError。
 pub async fn fetch_both(
     base: &str,
     gateway: &str,
     credential: &Credential,
     language: &str,
     plugin_version: &str,
-) -> (Result<Statistics, GatewayError>, Result<BenefitBalance, GatewayError>) {
+) -> (Result<Statistics, GatewayError>, Result<Option<BenefitBalance>, GatewayError>) {
     futures::future::join(
         fetch_statistics(base, credential, language, plugin_version),
         fetch_benefit_balance(gateway, credential),
@@ -536,7 +565,9 @@ mod tests {
     #[test]
     fn benefit_success_is_judged_by_the_envelope_not_the_transport() {
         let ok = r#"{"error_code":"0000","error_msg":"success","result":{"channel":"codearts","daily_token_limit":10000000,"daily_tokens_used":10231428,"monthly_token_limit":0,"monthly_tokens_used":10313740,"total_balance":0}}"#;
-        let balance = parse_benefit_balance(ok, &credential()).expect("0000 是成功");
+        let balance = parse_benefit_balance(ok, &credential())
+            .expect("0000 是成功")
+            .expect("有 result 就该有读数");
         assert_eq!(10_000_000, balance.daily_token_limit);
         // 超额：如实报，不藏
         assert_eq!(0, balance.remaining_daily(), "用超了剩余就是 0");
@@ -546,6 +577,23 @@ mod tests {
         let error = parse_benefit_balance(failed, &credential()).expect_err("200 + 非 0000 是失败");
         assert!(error.message.contains("9001"), "错误里要带上游的码：{}", error.message);
         assert!(parse_benefit_balance(r#"{"error_code":"0000"}"#, &credential()).is_err(), "缺 result 不能当成功");
+    }
+
+    /// 「该账号没有福利数据」是**正常状态**，不是错误：上游回
+    /// `4004 benefit not found`（实测于 Free 套餐账号），解析层要把它翻成
+    /// `Ok(None)` —— 若翻成 Err，界面会把一个正常状态渲染成「福利网关未读到」
+    /// 的警告，用户去查一个不存在的问题。
+    #[test]
+    fn a_missing_benefit_is_an_absence_not_a_failure() {
+        let absent = r#"{"error_code":"4004","error_msg":"benefit not found"}"#;
+        assert!(matches!(parse_benefit_balance(absent, &credential()), Ok(None)), "4004 + benefit not found 是「没有福利」");
+
+        // 码与文案**都**要命中：只认码会让 4004 将来承载别的语义时被静默吞掉，
+        // 只认文案会让换码（比如 4005）失效 —— 两条负向都钉住。
+        let other_message = r#"{"error_code":"4004","error_msg":"something else"}"#;
+        assert!(parse_benefit_balance(other_message, &credential()).is_err(), "4004 配别的文案要如实报错");
+        let other_code = r#"{"error_code":"4005","error_msg":"benefit not found"}"#;
+        assert!(parse_benefit_balance(other_code, &credential()).is_err(), "别的码配同一文案也要如实报错");
     }
 
     #[test]
