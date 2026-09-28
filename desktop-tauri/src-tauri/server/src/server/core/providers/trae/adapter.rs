@@ -235,9 +235,18 @@ impl ProviderAdapter for TraeAdapter {
         force: bool,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ModelRefreshOutcome> + Send + 'a>> {
         Box::pin(async move {
-            let record = match read_record(store, account_id) {
-                Ok(record) => record,
-                Err(error) => return ModelRefreshOutcome::failed(error.message),
+            // 「没有账号」不是失败（与 accio / qoder / codearts 同口径）：
+            // 自动路径每轮都会走到这里，把它算成失败会给用户还没配置的家记上
+            // 一次失败并触发冷却退避（间隔 × 2^(n-1)，默认间隔 60 分钟），
+            // 于是新用户添加完账号、回头点「获取模型」会被「请在 N 秒后重试」
+            // 挡住。`read_record` 的 401 语义留给转发与余额那两条链，
+            // 目录这条按空 id（自动）与点名（手动）分开处理。
+            let Some(record) = store.trae_account_record(account_id) else {
+                crate::server::logging::verbose("[Models]", "Trae 模型目录刷新跳过：尚未添加 Trae 账号");
+                if account_id.trim().is_empty() {
+                    return ModelRefreshOutcome::unchanged();
+                }
+                return ModelRefreshOutcome::failed("指定的 Trae 账号不存在或不可用，请重新选择");
             };
             let credential = match Credential::from_payload(&record) {
                 Ok(credential) => credential,

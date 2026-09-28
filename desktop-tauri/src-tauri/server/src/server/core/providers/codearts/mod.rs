@@ -456,10 +456,21 @@ impl ProviderAdapter for CodeArtsAdapter {
         _force: bool,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = super::adapter::ModelRefreshOutcome> + Send + 'a>> {
         Box::pin(async move {
+            // 空 id = 队首可用账号（自动路径的默认）；非空 = 用户在弹窗里点名的
+            // 那条。**「没有账号」不是失败**：自动路径每轮（启动、定时、被动拉
+            // /v1/models）都会走到这里，把它算成失败会给一家用户还没配置的家记上
+            // 一次失败、进而触发「间隔 × 2^(n-1)」的冷却退避（模型刷新间隔默认
+            // 60 分钟 ⇒ 一次失败就是 1 小时）。实测踩到过：用户 10:36 登录添加
+            // 完 CodeArts，点「获取模型」却被「请求处于冷却期，请在 2977 秒后
+            // 重试」挡住 —— 那次「失败」发生在账号存在之前（10:27）。
+            // 与 accio / qoder 逐字同口径：自动路径 `unchanged()`（没刷，
+            // 不是失败），点名取不到才 `failed()`。
             if store.codearts_account_record(account_id).is_none() {
-                // 自动路径每轮都会走到这里（用户没配 CodeArts 时不该刷屏），只打 verbose
                 crate::server::logging::verbose("[Models]", "CodeArts 模型目录刷新跳过：尚未添加 CodeArts 账号");
-                return super::adapter::ModelRefreshOutcome::failed("尚未添加 CodeArts 账号");
+                if account_id.trim().is_empty() {
+                    return super::adapter::ModelRefreshOutcome::unchanged();
+                }
+                return super::adapter::ModelRefreshOutcome::failed("指定的 CodeArts 账号不存在或不可用，请重新选择");
             };
             let credential = match proxy_and_fresh(store, account_id).await {
                 Ok(credential) => credential,
