@@ -54,13 +54,16 @@ impl CodeArtsAdapter {
     }
 }
 
-/// 纯函数：给定目录与本次真名，返回整组冷却名单。福利源 → 全部福利
-/// 模型 id（含本次真名，防御性地补上——被判成福利却不在名单里说明
-/// 目录与判定不同源，宁多记一个键也不漏）；非福利/未知 → 只记真名，
+/// 纯函数：给定目录与本次真名，返回整组冷却名单。福利判定**大小写无关**
+/// （客户端的大小写变体也算福利）；命中 → 全部福利模型 id，并把**本次发送名
+/// 原文**也补进名单 —— 它与目录 id 只是大小写不同时，判定侧对这类「映射没
+/// 解析出来」的请求读的是请求原文键（`routing::CooldownKeys` 的 ④ 兜底），
+/// 不补就会对同一形态的下一个请求漏命中。非福利/未知 → 只记本次名，
 /// 与 trait 默认行为一致。
 fn benefit_cooldown_group(catalog: &models::Catalog, wire_model: &str) -> Vec<String> {
-    let is_benefit = catalog.models.iter()
-        .any(|model| model.id == wire_model && model.source == models::ModelSource::Benefit);
+    let is_benefit = catalog.models.iter().any(|model| {
+        model.id.eq_ignore_ascii_case(wire_model) && model.source == models::ModelSource::Benefit
+    });
     if !is_benefit {
         return vec![wire_model.to_string()];
     }
@@ -310,21 +313,34 @@ impl ProviderAdapter for CodeArtsAdapter {
         }
     }
 
-    /// 会话式路径的分类：403/429 与无状态口径完全一致（403 = 额度耗尽、
-    /// 429 = 限流），其余透传。首包门把流内 `insufficient quota` 信封折成
-    /// 403 后落在这里 —— 之前它走「一律透传」，福利池耗尽后每个请求都
-    /// 白撞一遍全部账号、一个冷却都不落（实测三条 codearts 账号每请求
-    /// 约 1.2s 的顺延噪声，见 2026-09-28 取证）。
+    /// 会话式路径的分类：429 无歧义（限流）→ 记账；403 只有在**认得出额度**
+    /// 时才记账 —— 流内额度信封由首包门按 `insufficient quota` 折成 403，
+    /// 消息必带这串原文，HTTP 403 的诊断体带了也算数。认不出的 403（内容
+    /// 闸门 / 权限 / 签名这类）一律 Fatal 透传顺延、不罚账号：403 在本家是
+    /// 个粗状态码（`stream_fault` 给客户端补 `code` 正是为这个歧义），而福利
+    /// 池按整组记账，误罚的爆炸半径是全部福利模型 —— 宁缺勿滥。
+    ///
+    /// 首包门把流内 `insufficient quota` 信封折成 403 后落在这里 —— 之前它走
+    /// 「一律透传」，福利池耗尽后每个请求都白撞一遍全部账号、一个冷却都不落
+    /// （实测三条 codearts 账号每请求约 1.2s 的顺延噪声，见 2026-09-28 取证）。
     ///
     /// 401 故意**不**交 TokenExpired：会话式路径没有「刷凭证后同账号重试」
     /// 的编排，透传让调用方顺延下一个账号（跟现状一致）。
     fn classify_conversation_error(&self, error: &GatewayError) -> UpstreamErrorClass {
+        let quota_403 = error.status_code == 403
+            && error.message.to_lowercase().contains("insufficient quota");
         match error.status_code {
-            403 | 429 => UpstreamErrorClass::QuotaLimited {
+            429 => UpstreamErrorClass::QuotaLimited {
                 reset_at: None,
                 message: error.message.clone(),
                 upstream_code: error.upstream_code,
-                status: u16::try_from(error.status_code).unwrap_or(403),
+                status: u16::try_from(error.status_code).unwrap_or(429),
+            },
+            403 if quota_403 => UpstreamErrorClass::QuotaLimited {
+                reset_at: None,
+                message: error.message.clone(),
+                upstream_code: error.upstream_code,
+                status: 403,
             },
             _ => UpstreamErrorClass::Fatal {
                 status: u16::try_from(error.status_code).unwrap_or(500),
@@ -681,20 +697,40 @@ mod store_hooks {
         assert!(error.message.contains("refresh token"), "文案要点名缺什么：{}", error.message);
     }
 
-    /// 会话式分类：403/429 交回 QuotaLimited（额度/限流都要落冷却），其余
-    /// 一律 Fatal —— 特别是 401：会话式路径没有「刷凭证后同账号重试」的编排，
-    /// 交 TokenExpired 会把错误吞进一条根本不存在的重试链里。
+    /// 会话式分类：429 与「认得出额度」的 403 交回 QuotaLimited（都要落冷却）；
+    /// 认不出额度的 403（内容闸门/权限/签名）与 401/502 一律 Fatal —— 特别是
+    /// 401：会话式路径没有「刷凭证后同账号重试」的编排，交 TokenExpired 会把
+    /// 错误吞进一条根本不存在的重试链里。
     #[test]
     fn conversation_classification_marks_quota_only_for_403_and_429() {
         use crate::server::errors::GatewayError;
         use super::UpstreamErrorClass;
-        let class = |status: i32| {
-            CODEARTS_ADAPTER.classify_conversation_error(&GatewayError::with_status(status, "x"))
+        let class = |status: i32, message: &str| {
+            CODEARTS_ADAPTER
+                .classify_conversation_error(&GatewayError::with_status(status, message))
         };
-        assert!(matches!(class(403), UpstreamErrorClass::QuotaLimited { status: 403, .. }));
-        assert!(matches!(class(429), UpstreamErrorClass::QuotaLimited { status: 429, .. }));
-        assert!(matches!(class(401), UpstreamErrorClass::Fatal { status: 401, .. }));
-        assert!(matches!(class(502), UpstreamErrorClass::Fatal { status: 502, .. }));
+        // 流内折叠的额度信封：首包门按 insufficient quota 折的 403，消息必带原文
+        assert!(matches!(
+            class(403, "上游报告 InferHub.4291.200：insufficient quota"),
+            UpstreamErrorClass::QuotaLimited { status: 403, .. }
+        ));
+        // HTTP 403、诊断体里带额度原文 → 也认
+        assert!(matches!(
+            class(403, "CodeArts 上游返回 HTTP 403：{error_msg: insufficient quota}"),
+            UpstreamErrorClass::QuotaLimited { .. }
+        ));
+        // 认不出额度的 403 → 透传，不罚账号
+        assert!(matches!(
+            class(403, "CodeArts 上游返回 HTTP 403：permission denied"),
+            UpstreamErrorClass::Fatal { status: 403, .. }
+        ));
+        // 429 无歧义（限流）→ 记账
+        assert!(matches!(
+            class(429, "too many requests"),
+            UpstreamErrorClass::QuotaLimited { status: 429, .. }
+        ));
+        assert!(matches!(class(401, "x"), UpstreamErrorClass::Fatal { status: 401, .. }));
+        assert!(matches!(class(502, "x"), UpstreamErrorClass::Fatal { status: 502, .. }));
         // 其它家的默认实现必须还是 Fatal（CatPaw 的行为逐字不变）
         use crate::server::core::providers::catpaw::adapter::CATPAW_ADAPTER;
         assert!(matches!(
@@ -731,6 +767,11 @@ mod store_hooks {
         for expected in ["deepseek-v4-flash-0731", "glm-5.3-flash", "deepseek-v4-pro-0813", "deepseek-v4.1-flash"] {
             assert!(group.iter().any(|name| name == expected), "缺 {expected}：{group:?}");
         }
+        // 大小写变体也算福利：整组照记，并补上本次发送名原文的键（判定侧对
+        // 解析不出映射的请求读的是请求原文键，见 benefit_cooldown_group 注释）
+        let variant = benefit_cooldown_group(&catalog, "GLM-5.3-Flash");
+        assert_eq!(5, variant.len(), "整组 4 条 + 变体原文 1 条：{variant:?}");
+        assert!(variant.iter().any(|name| name == "GLM-5.3-Flash"), "缺变体原文键：{variant:?}");
         // 非福利源（agent/builtin）与不在目录里的名字只记自己 —— 不波及别人
         assert_eq!(vec!["GLM-5.2".to_string()], benefit_cooldown_group(&catalog, "GLM-5.2"));
         assert_eq!(vec!["ghost".to_string()], benefit_cooldown_group(&catalog, "ghost"));
