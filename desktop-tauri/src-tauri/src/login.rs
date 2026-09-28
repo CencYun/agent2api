@@ -422,6 +422,12 @@ fn normalize_provider(provider: &str) -> Result<&'static str, String> {
         // 上打不开，也**不影响**登录判定。
         "zcode" => Ok("zcode"),
         "zcode-intl" => Ok("zcode-intl"),
+        // CodeArts（华为云码道）：授权地址由**后端适配器**现拼（PKCE + 回调 URL，
+        // 见 `providers::codearts::oauth::authorize_url`），壳侧只负责开窗口与
+        // 轮询 —— 与 ZCode 同一条路。它的回调由 portal 拼成
+        // `http://127.0.0.1:<网关端口>/oauth/callback` 落回网关自己，所以窗口
+        // **必须允许**导航到本机端口（见下面 allowed_hosts 的同一条）。
+        "codearts" => Ok("codearts"),
         // Trae（SOLO CN）：授权地址由**后端**问上游 guidance 拼（PKCE + 回调 URL），
         // 壳侧只负责开窗口与轮询 —— 与 ZCode 同一条路。特别地，它的回调落在
         // `http://127.0.0.1:<随机端口>/authorize`（网关自己监听的那台 loopback，
@@ -712,17 +718,21 @@ pub async fn start(
         // 要跳过 edition 后缀，否则会得到「登录 ZCode 国内版 国内版账号」
         "zcode" => "ZCode 国内版",
         "zcode-intl" => "ZCode 国际版",
+        // CodeArts 只有一家（region 固定在 cn-north-4 且必须与 token 签发地
+        // 一致，不是用户可选项，见 `providers::codearts` 的模块头），
+        // 品牌名里不需要地区
+        "codearts" => "CodeArts",
         // Trae 只有一家（国内 SOLO 通道；国际版是另一套协议、另立 provider id），
         // 品牌名里不需要地区
         "trae" => "Trae",
         _ => "WorkBuddy",
     };
-    // 窗口标题：Cline 两家的池、ZCode 两家的地区都已经在品牌名里，
-    // 不再拼 edition 后缀（否则会出现「登录 Cline Free 国内版账号」
-    // 「登录 ZCode 国内版 国内版账号」这种说不通的标题）
+    // 窗口标题：Cline 两家的池、ZCode 两家的地区、CodeArts / Trae 的单一家
+    // 都已经在品牌名里，不再拼 edition 后缀（否则会出现「登录 Cline Free 国内版
+    // 账号」「登录 ZCode 国内版 国内版账号」这种说不通的标题）
     let title = if matches!(
         provider,
-        "cline-free" | "cline-pass" | "zcode" | "zcode-intl" | "trae"
+        "cline-free" | "cline-pass" | "zcode" | "zcode-intl" | "codearts" | "trae"
     ) {
         format!("登录 {provider_label} 账号")
     } else {
