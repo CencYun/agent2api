@@ -30,8 +30,8 @@ use std::collections::BTreeMap;
 use serde_json::{json, Map, Value};
 
 use super::{
-    chat_frame, content_parts, content_text, is_truthy, json_text, random_id, string_field,
-    string_value, SseLineBuffer, FIELD_CACHE_CONTROL, FIELD_IS_ERROR,
+    chat_frame, content_parts, content_text, is_truthy, json_text, native_tool, random_id,
+    string_field, string_value, SseLineBuffer, FIELD_CACHE_CONTROL, FIELD_IS_ERROR,
 };
 use super::anthropic::{parse_json_object, tool_result_text, DEFAULT_MAX_TOKENS};
 use super::responses::ConvertError;
@@ -167,14 +167,36 @@ pub fn anthropic_request_from_chat(chat: &Value, model: &str) -> Result<Value, C
             out.insert("stop_sequences".to_string(), Value::Array(list));
         }
     }
+    // 工具声明：函数工具翻译成 Anthropic 形态；原生（服务端执行）声明只有
+    // 「来源就是 Anthropic」的原样恢复（保真），跨协议的不猜 —— 剔除并留痕
+    // （见 `native_tool` 模块头；静默剔除或硬塞给上游都是 #61 那类难查的形态）
+    let mut natives: Vec<Value> = Vec::new();
     if let Some(tools) = chat.get("tools").and_then(Value::as_array) {
-        let converted: Vec<Value> = tools.iter().filter_map(tool_to_anthropic).collect();
+        let converted: Vec<Value> = tools
+            .iter()
+            .filter_map(|tool| tool_to_anthropic(tool, &mut natives))
+            .collect();
         if !converted.is_empty() {
             out.insert("tools".to_string(), Value::Array(converted));
         }
     }
+    let mut choice_reason: Option<String> = None;
     if let Some(choice) = chat.get("tool_choice").filter(|value| is_truthy(value)) {
-        out.insert("tool_choice".to_string(), tool_choice_to_anthropic(choice));
+        // 点名的工具被剔除时 `tool_choice` 一并撤掉：留着它上游会按
+        // 「指定的工具不存在」报错，把一次「搜索不可用」升级成整轮 400
+        match native_tool::choice_conflict(choice, &natives) {
+            Some(reason) => choice_reason = Some(reason),
+            None => {
+                out.insert("tool_choice".to_string(), tool_choice_to_anthropic(choice));
+            }
+        }
+    }
+    if !natives.is_empty() || choice_reason.is_some() {
+        let dropped = native_tool::Downgrade { tools: natives, choice: choice_reason };
+        crate::server::logging::log(
+            "[Anthropic]",
+            &dropped.describe(None, Some("目标上游按 anthropic 协议收，只认 anthropic 来源的原生声明")),
+        );
     }
     Ok(Value::Object(out))
 }
@@ -355,8 +377,20 @@ fn image_to_anthropic(part: &Value) -> Option<Value> {
     None
 }
 
-/// Chat 工具声明（嵌套 function）→ Anthropic 工具（`input_schema` 形态）。
-fn tool_to_anthropic(tool: &Value) -> Option<Value> {
+/// Chat 工具声明 → Anthropic 工具（`input_schema` 形态）。
+///
+/// 原生（服务端执行）声明分两种归宿：来源是 Anthropic 的原样恢复（`natives`
+/// 不收，保真）；其余（Responses 来源、或 chat 入口的方言原生工具）收进
+/// `natives` 由调用方留痕剔除 —— 目标协议是 anthropic，承载不了别的协议的
+/// 原生类型（见 `native_tool` 模块头）。
+fn tool_to_anthropic(tool: &Value, natives: &mut Vec<Value>) -> Option<Value> {
+    if native_tool::is_native(tool) {
+        if native_tool::origin_of(tool) == Some(native_tool::ORIGIN_ANTHROPIC) {
+            return Some(native_tool::restore(tool));
+        }
+        natives.push(tool.clone());
+        return None;
+    }
     // chat 侧只会有嵌套形态；裸 function 对象也容忍（两种形态等价）
     let function = tool.get("function").unwrap_or(tool);
     let name = string_field(function, "name");

@@ -211,6 +211,15 @@ pub fn restore_namespace(mut item: Value, flat_name: &str, plan: &ToolPlan) -> V
 /// 关键能力 —— 2026-09 那次 Codex 工具失效，症状是模型把调用当正文吐出来，
 /// 若当时有这行日志，一眼就能定位。
 pub fn tool_kind_label(tool: &Value) -> String {
+    // 字符串简写（`tools: ["web_search"]`）：它自己就是名字
+    if let Some(text) = tool.as_str() {
+        let text = text.trim();
+        return if text.is_empty() {
+            "未命名工具".to_string()
+        } else {
+            text.to_string()
+        };
+    }
     let name = string_field(tool, "name");
     let kind = string_field(tool, "type");
     if name.is_empty() {

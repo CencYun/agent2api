@@ -25,8 +25,8 @@
 use serde_json::{json, Map, Value};
 
 use super::{
-    content_parts, content_text, event_frame, freeform, is_truthy, json_text, random_id,
-    string_field, string_value, tool_plan, SseLineBuffer, FIELD_ENCRYPTED_CONTENT,
+    content_parts, content_text, event_frame, freeform, is_truthy, json_text, native_tool,
+    random_id, string_field, string_value, tool_plan, SseLineBuffer, FIELD_ENCRYPTED_CONTENT,
 };
 use crate::server::logging;
 
@@ -83,7 +83,7 @@ pub fn chat_from_responses(body: &Value) -> Result<Value, ConvertError> {
     if !plan.declarations.is_empty() {
         let mut converted: Vec<Value> = Vec::new();
         let mut downgraded: Vec<String> = Vec::new();
-        let mut ignored: Vec<String> = Vec::new();
+        let mut natives: Vec<Value> = Vec::new();
         for tool in &plan.declarations {
             if let Some(function) = tool_to_chat(tool) {
                 converted.push(function);
@@ -91,8 +91,10 @@ pub fn chat_from_responses(body: &Value) -> Result<Value, ConvertError> {
             }
             // 没转出来的分两类。custom（freeform）是**要**降级的 —— 漏了就是
             // 静默失效（Codex 的 exec / apply_patch 全部失效即由此而来）；
-            // 其余（web_search / local_shell 等 Responses 原生工具）上游确实
-            // 没有对应物，只能丢，但要留痕，否则同样是静默失效
+            // 其余（web_search / tool_search / file_search 等 Responses 宿主工具）
+            // 是**上游服务端执行**的原生能力：保真携带（原样 + 来源标记），
+            // 去留交给出站侧按目标协议定（见 `native_tool` 模块头）。
+            // 曾经在这里直接丢弃 —— issue #61 / #55 的「原生搜索不可用」即由此来。
             if freeform::is_custom_tool(tool) {
                 if let Some(function) = freeform::downgrade_custom_tool(tool) {
                     downgraded.push(string_field(tool, "name"));
@@ -100,16 +102,22 @@ pub fn chat_from_responses(body: &Value) -> Result<Value, ConvertError> {
                     continue;
                 }
             }
-            ignored.push(tool_plan::tool_kind_label(tool));
+            natives.push(native_tool::carry(tool, native_tool::ORIGIN_RESPONSES));
         }
-        if !ignored.is_empty() {
-            logging::log(
+        if !natives.is_empty() {
+            logging::verbose(
                 "[Responses]",
                 &format!(
-                    "⚠️ 上游 Chat 接口无对应形态，已丢弃这些工具声明：{}",
-                    ignored.join(", ")
+                    "原生（服务端执行）工具声明 {} 条随行：{}",
+                    natives.len(),
+                    natives
+                        .iter()
+                        .map(tool_plan::tool_kind_label)
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ),
             );
+            converted.extend(natives);
         }
         if !downgraded.is_empty() {
             logging::verbose(

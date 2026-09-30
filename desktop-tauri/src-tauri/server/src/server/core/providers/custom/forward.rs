@@ -188,7 +188,28 @@ pub(crate) async fn forward(
     // 见 `protocol::mod` 的说明）绝不发上游 —— 严格校验的 OpenAI 兼容上游会拒绝
     // 消息上的未知字段整轮 400。翻译分支（上方已 return）**不**剥：那些字段正是
     // 出站翻译要消费的（cache_control / is_error / encrypted_content 的恢复源）。
-    let stripped = crate::server::core::protocol::strip_internal_fields(body);
+    //
+    // 剥之前先过原生工具闸门：自定义家的契约是透传（chat 入口带上来的 chat 方言
+    // 原生工具，如智谱的 `{"type":"web_search","web_search":{…}}`，原样上行），
+    // 但**带标记的跨协议声明**（下游走 /v1/messages 或 /v1/responses 带过来的
+    // `web_search_20250305` / `web_search` 那类）没有 chat 形态，硬发只会换来
+    // 上游一次 400 —— 剔除 + 留痕，见 `protocol::native_tool` 模块头。
+    let cross = crate::server::core::protocol::native_tool::strip_cross_protocol(
+        body,
+        crate::server::core::protocol::native_tool::ORIGIN_CHAT,
+    );
+    if let Some((_, dropped)) = &cross {
+        logging::log(
+            "[CustomProvider]",
+            &dropped.describe(
+                Some(provider_id),
+                Some("该家按 chat 协议透传，承载不了别的协议的原生声明"),
+            ),
+        );
+    }
+    let stripped = crate::server::core::protocol::strip_internal_fields(
+        cross.as_ref().map(|(next, _)| next).unwrap_or(body),
+    );
     let body: &Value = &stripped;
     let url = format!(
         "{}/chat/completions{}",
