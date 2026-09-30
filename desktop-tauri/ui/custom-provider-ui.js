@@ -70,14 +70,18 @@
   }
 
   /**
-   * 保存提供商配置：POST /api/custom-providers/update（三个字段一起提交，
-   * 都是表单上的必填值，后端也会再校验一次）。
+   * 保存提供商配置：POST /api/custom-providers/update。
+   * 三个字段一起提交（都是表单上的必填值，后端也会再校验一次）；`clientEmulation`
+   * 只在调用方**真的带了**这个键时才提交（patch 语义：不带 = 不改）—— 账号设置
+   * 弹窗总是带它（勾选框有初值，改没改都是确定态），而别处调用不带。
    * 失败原样抛出（不在这里 toast）：调用方是账号设置弹窗，它要把「账号已保存、
    * 提供商未更新」这句话写在弹窗里，笼统报一句「保存失败」会把两件事混成一件。
    */
-  async function update({ id, name, protocol, baseUrl }) {
+  async function update({ id, name, protocol, baseUrl, clientEmulation }) {
     if (!isCustomProviderId(id)) throw new Error('不是自定义提供商');
-    await providers.customRequest('POST', '/api/custom-providers/update', { id, name, protocol, baseUrl });
+    const body = { id, name, protocol, baseUrl };
+    if (typeof clientEmulation === 'string') body.clientEmulation = clientEmulation;
+    await providers.customRequest('POST', '/api/custom-providers/update', body);
     await refreshAfterChange();
   }
 
