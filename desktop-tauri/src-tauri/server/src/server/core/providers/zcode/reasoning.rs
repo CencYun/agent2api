@@ -36,10 +36,23 @@
 //! （参考实现的模型匹配式也刻意把它们排除在外），因此那些模型原样走通用
 //! 路径，不猜数字 —— 猜错的代价是给上游发一个它不认的预算。
 //!
+//! 同一条界线也管**映射绑定**：模型管理里给某条映射绑的档位只在 5.3 家族上
+//! 生效（适配器的 `reasoning_patch` 对别的模型直接 `Skip`），所以「绑了不生效」
+//! 时详细日志里能读到原因，而不是一个静默的默认值。
+//!
 //! ── 硬约束 ──────────────────────────────────────────────────
 //! release 是 `panic=abort`：本文件零 unwrap/expect/panic。
 
 use serde_json::Value;
+
+/// 思考等级在请求体里的**唯一**字段名。
+///
+/// 两条通道都认它：编码套餐通道由 [`apply_to_chat`] 原样归一后发上游；
+/// 活动套餐通道由 `plan::build_request` 从同一处读出来交给
+/// [`apply_to_anthropic`] 折成 thinking 预算 + `output_config.effort`。
+/// 映射绑定的默认档（适配器的 `reasoning_patch`）也写这个键 —— 定义在这里
+/// 是为了三处写读同一个字面量，改名时不会漏掉某一条通道。
+pub(super) const EFFORT_FIELD: &str = "reasoning_effort";
 
 /// 合法思考等级（上游文档化的三档，见模块头）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -202,9 +215,10 @@ pub(super) fn apply_to_anthropic(
 /// 小额度场景的出路 —— 把等级压到 `low` 之后，16 个 token 的额度里
 /// 也留得住正文，所以这里对「短输出且客户端没点名」的情形注 `low`。
 ///
-/// 客户端点名了就用它的档位；没点名又不像短输出则**不注入**（保持上游默认，
-/// 实测约 100 个思考 token，属于正常量级）——与 Anthropic 那条通道不同，
-/// 那边「不注入」会让上游按自己的默认想到把额度吃光，这边不会。
+/// 体里点名了就用它的档位（客户端显式传的、或映射上绑的默认档 —— 两者走到
+/// 这里都已经是同一个 [`EFFORT_FIELD`] 键）；没点名又不像短输出则**不注入**
+/// （保持上游默认，实测约 100 个思考 token，属于正常量级）——与 Anthropic
+/// 那条通道不同，那边「不注入」会让上游按自己的默认想到把额度吃光，这边不会。
 pub(super) fn apply_to_chat(body: &mut Value, model: &str) {
     if !is_glm53(model) {
         return;
@@ -213,7 +227,7 @@ pub(super) fn apply_to_chat(body: &mut Value, model: &str) {
         return;
     };
     let effort = object
-        .get("reasoning_effort")
+        .get(EFFORT_FIELD)
         .and_then(Value::as_str)
         .map(str::to_string);
     let client_max = object
@@ -228,7 +242,7 @@ pub(super) fn apply_to_chat(body: &mut Value, model: &str) {
     };
     if let Some(level) = level {
         object.insert(
-            "reasoning_effort".to_string(),
+            EFFORT_FIELD.to_string(),
             Value::String(level.as_str().to_string()),
         );
     }

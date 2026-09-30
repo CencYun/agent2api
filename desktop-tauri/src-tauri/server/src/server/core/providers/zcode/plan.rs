@@ -223,11 +223,13 @@ pub(super) fn build_request(
     // `thinking`（那张表服务所有上游，而 5.3 家族有官方目录给的三档，见
     // `super::reasoning` 的模块头），并且把预算加到 `max_tokens` 之上 ——
     // 少了这一步，思考会把客户端的输出额度吃光，上游回 200 + 空正文
-    // （issue #52 / #54 的根因）。取值一律来自**客户端原始请求**（`body`）。
+    // （issue #52 / #54 的根因）。取值从**发送体**读：客户端原始请求里的
+    // `reasoning_effort`，或映射上绑的默认档（适配器的 `reasoning_patch`
+    // 在更早一步注进同一个键）—— 两条来路在这里汇成一个旋钮。
     super::reasoning::apply_to_anthropic(
         &mut payload,
         &model,
-        body.get("reasoning_effort").and_then(Value::as_str),
+        body.get(super::reasoning::EFFORT_FIELD).and_then(Value::as_str),
         client_max_tokens(body),
     );
     let device_mid = text_of("deviceMid");
