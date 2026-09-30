@@ -89,6 +89,13 @@
    * 过滤）—— 确认文案必须先把「会连带删掉多少条」说清楚，这是级联删除与单条、
    * 可逆操作的分界。响应里的 accountsRemoved 是权威值，成功提示用它（万一与
    * 本地计数不一致，以删掉的真实条数为准）。
+   *
+   * 后端还会级联把这家的 id 从各 Key 的「可用提供商」白名单里摘掉（响应里的
+   * keysUpdated / keysUnrestricted）：不摘的话那几把 Key 会变成「谁都进不来」。
+   * 这两个读数在**成功提示**里说 —— 可用范围是**权限**，其中 keysUnrestricted
+   * 那几把是从「只允许这家」变成「不限制」，不写出来等于悄悄放宽了权限。
+   * 确认文案里不写它们：那不是删除动作带来的数据损失（不像上面那 N 个账号），
+   * 而本地没有 Key 列表面，为它多打一次 /api/keys 换一句提示不划算。
    */
   async function remove(providerId) {
     const provider = await findProvider(providerId);
@@ -110,7 +117,16 @@
     try {
       const data = await providers.customRequest('POST', '/api/custom-providers/remove', { id: providerId });
       const removed = Number(data?.accountsRemoved);
-      toast(`✅ 已删除自定义提供商「${name}」${Number.isFinite(removed) ? `及 ${removed} 个账号` : ''}`);
+      const keysUpdated = Number(data?.keysUpdated);
+      const keysUnrestricted = Number(data?.keysUnrestricted);
+      let keysNote = '';
+      if (Number.isFinite(keysUpdated) && keysUpdated > 0) {
+        keysNote = `，并从 ${keysUpdated} 把 Key 的可用提供商里移除`;
+        if (Number.isFinite(keysUnrestricted) && keysUnrestricted > 0) {
+          keysNote += `（其中 ${keysUnrestricted} 把恢复为不限制）`;
+        }
+      }
+      toast(`✅ 已删除自定义提供商「${name}」${Number.isFinite(removed) ? `及 ${removed} 个账号` : ''}${keysNote}`);
       await refreshAfterChange();
       return true;
     } catch (error) {
