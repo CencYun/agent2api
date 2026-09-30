@@ -54,6 +54,10 @@ export type AccountRecord = {
   email?: string
   priority?: number
   enabled?: boolean
+  /** 凭证完整性（后端逐家给出；缺省视为可用）：false = 登录态缺失 / 凭证不全。
+   *  余额的批量目标集合按它排除（与后端 `resolve_batch_targets` 同一口径），
+   *  与 `enabled` 是两回事 —— 禁用只表示不参与转发，余额仍可查。 */
+  available?: boolean
   /** 桌面端实时登录态（凭证每次从客户端登录态文件读取） */
   desktop?: boolean
   edition?: string

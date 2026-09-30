@@ -308,7 +308,7 @@ function AccountsPage() {
               }}>添加账号</Button>
             <Button id='btn-query-usage' variant='outline'
               disabled={store.usageBusy || !all.some(supportsUsage)}
-              title='查询全部启用账号的余额'
+              title='查询全部账号的余额（含已禁用账号 —— 禁用只表示不参与转发）'
               onClick={() => void queryAllUsage()}>{store.usageBusy ? '查询中…' : '查询余额'}</Button>
             <Button id='btn-checkin-all' variant='outline'
               disabled={store.checkinBusy || !checkinableAccounts(all).length}
