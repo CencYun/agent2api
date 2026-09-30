@@ -29,7 +29,7 @@
 //! release 是 `panic=abort`：本文件零 unwrap/expect/panic。
 
 use axum::http::HeaderMap;
-use serde_json::Value;
+use serde_json::{json, Map, Value};
 
 use crate::server::core::account_store::AccountStore;
 use crate::server::errors::GatewayError;
@@ -141,10 +141,24 @@ impl ProviderAdapter for ZcodeAdapter {
             ("Authorization".to_string(), format!("Bearer {token}")),
         ];
         headers.extend(identity_headers(None));
+        let mut outgoing = body.clone();
+        // 思考等级：这条通道没有「思考预算」这个概念，`reasoning_effort` 是唯一
+        // 的旋钮，注了才拦得住「小输出额度被思考吃光、正文空串」（见
+        // `super::reasoning` 的模块头与 `apply_to_chat` 的说明）。
+        let wire_model = outgoing
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        super::reasoning::apply_to_chat(&mut outgoing, &wire_model);
+        // 流式补 `stream_options.include_usage`：上游只在显式要求时才回用量帧，
+        // 不补的话这条通道的输入/输出/缓存三列恒为 0（面板看着像没计费）。
+        // 与 workbuddy 的 `normalize` 同一手法：**不覆盖**客户端已有的取值。
+        ensure_include_usage(&mut outgoing);
         Ok(ChatRequestPlan::chat(
             format!("{}/chat/completions", self.openai_base_url()),
             headers,
-            body.clone(),
+            outgoing,
         ))
     }
 
@@ -369,5 +383,34 @@ fn os_category() -> &'static str {
         "macos"
     } else {
         "linux"
+    }
+}
+
+/// 流式请求补 `stream_options.include_usage = true`。
+///
+/// ── 为什么要补 ──────────────────────────────────────────────
+/// OpenAI 协议的流式响应**默认不带用量帧**，上游只在客户端显式要求时才在流末
+/// 补一帧 `usage`。不补的后果是这条通道的请求日志三列（输入 / 输出 / 缓存）
+/// 恒为 0 —— 面板看着像「这条没计费」，也让「用量对不上上游账单」这类问题
+/// （issue #56）失去参照物。非流式响应本来就带 usage，因此这里只动流式。
+///
+/// ── 为什么不覆盖客户端的取值 ────────────────────────────────
+/// 客户端可能显式写了 `include_usage: false`（少数客户端拿它省一帧），
+/// 那是它的选择；网关补的是**缺省值**，不是替它做决定 —— 与 workbuddy
+/// `normalize` 的 `stream_options` 处理同一条口径。
+fn ensure_include_usage(body: &mut Value) {
+    let Some(object) = body.as_object_mut() else {
+        return;
+    };
+    if object.get("stream").and_then(Value::as_bool) != Some(true) {
+        return;
+    }
+    let options = object
+        .entry("stream_options".to_string())
+        .or_insert_with(|| Value::Object(Map::new()));
+    if let Some(options) = options.as_object_mut() {
+        options
+            .entry("include_usage".to_string())
+            .or_insert_with(|| json!(true));
     }
 }
