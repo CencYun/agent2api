@@ -213,22 +213,28 @@ pub(super) fn send_body<'a>(
     // （CatPaw）到「静默剔除」（Qoder / Trae）都有 —— 所以统一在这里降级：
     // 剔除 + 留痕，各家适配器看到的永远只有函数工具。
     //
-    // 自定义家**不**走这道闸门：chat 分支只剔带标记的跨协议声明（透传是它的
-    // 契约，见 `providers::custom::forward`），翻译分支在出站转换器里自己处理。
+    // 自定义家**不**走这道闸门（判据是 `is_custom_provider_id`）：chat 分支只剔
+    // 带标记的跨协议声明（透传是它的契约，见 `providers::custom::forward`），
+    // 翻译分支在出站转换器里自己处理。这里先剔会把客户端声明的 chat 方言原生
+    // 工具（智谱那套）也一并删掉，与透传契约矛盾。
     // 日后若某家确认支持某个原生工具，在这里（唯一闸门）按家/按类型开白即可。
     // 完整取舍见 `core::protocol::native_tool` 的模块头。
-    let mut body = match crate::server::core::protocol::native_tool::downgrade(body.as_ref()) {
-        Some((next, dropped)) => {
-            logging::log(
-                "[Upstream]",
-                &dropped.describe(
-                    Some(provider_id),
-                    Some("本上游只承载 type:\"function\" 的函数工具"),
-                ),
-            );
-            Cow::Owned(next)
+    let mut body = if crate::server::core::custom_providers::is_custom_provider_id(provider_id) {
+        body
+    } else {
+        match crate::server::core::protocol::native_tool::downgrade(body.as_ref()) {
+            Some((next, dropped)) => {
+                logging::log(
+                    "[Upstream]",
+                    &dropped.describe(
+                        Some(provider_id),
+                        Some("本上游只承载 type:\"function\" 的函数工具"),
+                    ),
+                );
+                Cow::Owned(next)
+            }
+            None => body,
         }
-        None => body,
     };
     let requested = body
         .get("model")

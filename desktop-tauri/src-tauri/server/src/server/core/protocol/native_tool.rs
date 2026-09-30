@@ -238,9 +238,14 @@ pub fn choice_conflict(choice: &Value, dropped: &[Value]) -> Option<String> {
 
 /// 内置家闸门：剔除**全部**原生声明（内置家只承载 `type:"function"` 的函数工具）。
 ///
+/// 判据是 [`is_native`] —— 函数工具（`type:"function"`，含嵌套与扁平两种写法）
+/// 一律保留。这里**不能**用恒真谓词：那会把客户端的函数工具一并删掉，模型拿到
+/// 一个没有 tools 的请求，只能把调用写成正文吐出来（2026-10-01 那次「什么模型
+/// 都调不了工具」的事故就是这样发生的）。
+///
 /// 没有可剔的（绝大多数请求）返回 None；有则连带处理指向它们的 `tool_choice`。
 pub fn downgrade(body: &Value) -> Option<(Value, Downgrade)> {
-    strip_with(body, |_| true)
+    strip_with(body, is_native)
 }
 
 /// 自定义家 chat 出口：只剔「来源协议 ≠ 目标协议」的**带标记**声明。

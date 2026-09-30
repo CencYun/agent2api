@@ -220,8 +220,21 @@ pub fn tool_kind_label(tool: &Value) -> String {
             text.to_string()
         };
     }
-    let name = string_field(tool, "name");
     let kind = string_field(tool, "type");
+    // 名字两处可取：扁平写法的顶层 `name`，与嵌套 Chat 形态
+    // （`{"type":"function","function":{"name":…}}`）里层的 `function.name`。
+    // 只看顶层的话，标准 OpenAI 形态的工具在日志里全印成「function」，
+    // 等于没报名字 —— 2026-10-01 排查「工具被整批剔除」时就吃了这个亏。
+    let name = {
+        let flat = string_field(tool, "name");
+        if !flat.is_empty() {
+            flat
+        } else {
+            tool.get("function")
+                .map(|function| string_field(function, "name"))
+                .unwrap_or_default()
+        }
+    };
     if name.is_empty() {
         if kind.is_empty() { "未命名工具".to_string() } else { kind }
     } else if kind.is_empty() || kind.eq_ignore_ascii_case("function") {
