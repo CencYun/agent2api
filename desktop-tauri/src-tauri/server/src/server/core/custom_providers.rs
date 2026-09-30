@@ -386,6 +386,34 @@ pub fn list() -> Vec<Value> {
     read_items()
 }
 
+/// 摘要形态的自定义家列表（`{id, label, count}`）——「可选哪些家」这类候选表的
+/// **自定义家那一半**（另一半是注册表，见 `providers::summary_json`）。
+///
+/// 形状与注册表那一份**逐键一致**：消费方（`api::keys_api` 的「可用提供商」候选）
+/// 把两张表首尾拼成一张候选表，形状不同就得在拼接处再写一层适配，而那种适配层
+/// 只会让「加一个字段忘了另一边」的事故重演 —— 形状一致时，界面拿到的就是一张
+/// 无差别的表（它本来也不该知道哪一项是自定义家）。
+///
+/// `label` 取 `name`：用户起的名字就是这一家的展示名（与 `label_of` 同一口径，
+/// 回退 id 而不是「未知」——见 `providers::label_of` 的说明）。
+///
+/// 为什么 `count` 由调用方算而不是在这里数：账号在 `AccountStore` 里，本模块是
+/// 配置层、不认识它（与 `providers::summary_json` 同一取舍）。也正因为只借一个
+/// 计数闭包，两张表的 `count` 必然同口径 —— 都是「这家现在有几个账号」。
+pub fn summary_json<F>(count: F) -> Vec<Value>
+where
+    F: Fn(&str) -> usize,
+{
+    list()
+        .into_iter()
+        .filter_map(|item| {
+            let id = item.get("id").and_then(Value::as_str)?;
+            let label = item.get("name").and_then(Value::as_str).unwrap_or(id);
+            Some(json!({ "id": id, "label": label, "count": count(id) }))
+        })
+        .collect()
+}
+
 /// 按 id 取一条；不存在返回 None。
 pub fn get(id: &str) -> Option<Value> {
     let id = id.trim();
