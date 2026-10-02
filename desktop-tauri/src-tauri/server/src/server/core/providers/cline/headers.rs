@@ -20,15 +20,22 @@
 
 use std::collections::BTreeMap;
 
+use super::adapter::CLIENT_TYPE;
+
 /// 默认请求头（键 → 值）。`Authorization` / `Content-Type` / `Accept` /
 /// `X-Task-ID` 不在其中：前两个是协议必需（适配器固定构造），`X-Task-ID`
-/// 每请求动态生成（与 body 的 `session_id` 同值），都不该被用户覆盖。
+/// 每请求动态生成（与 body 的 `session_id` 同值），都不该被用户覆盖
+/// （这套「固定头」清单同时也是管理接口拒绝覆盖的依据，见
+/// `api::cline_headers::FIXED_HEADERS`）。
+///
+/// `X-CLIENT-TYPE` 引用 `adapter::CLIENT_TYPE`（不是再抄一份字面量）：这个值
+/// 是免费池的硬门槛，两处各写一份的话，改一处不会带动另一处。
 pub const DEFAULT_HEADERS: &[(&str, &str)] = &[
     ("User-Agent", "Cline/3.0.62"),
     ("HTTP-Referer", "https://cline.bot"),
     ("X-Title", "Cline"),
     ("X-IS-MULTIROOT", "false"),
-    ("X-CLIENT-TYPE", "cline-sdk"),
+    ("X-CLIENT-TYPE", CLIENT_TYPE),
     ("X-CLIENT-VERSION", "3.0.62"),
     ("X-PLATFORM", "terminal"),
     ("X-PLATFORM-VERSION", "3.0.62"),
@@ -47,19 +54,36 @@ pub fn effective_headers() -> Vec<(String, String)> {
 }
 
 /// 合并的纯函数形态（[`effective_headers`] 的本体，单测直接喂覆盖表）。
+///
+/// 键的比对**大小写不敏感**（HTTP 头名本来就不区分大小写）：覆盖表里写
+/// `user-agent` 要能覆盖默认的 `User-Agent`，而且**不能**两行都出现。
+/// 这与适配器侧的 `upsert_header` 同一口径 —— 两边不一致的话，
+/// 这里返回的「生效值」就不是适配器真正发出去的那份（管理接口的
+/// `effective` 字段就是这么声称的）。
 fn merge_headers(overrides: &BTreeMap<String, String>) -> Vec<(String, String)> {
+    // 按头名（大小写不敏感）取覆盖值
+    let override_for = |name: &str| -> Option<&String> {
+        overrides
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value)
+    };
     let mut headers: Vec<(String, String)> = Vec::with_capacity(DEFAULT_HEADERS.len());
     for (key, default_value) in DEFAULT_HEADERS {
         // 空串覆盖 = 显式不发这个头；其余按键覆盖
-        match overrides.get(*key) {
+        match override_for(key) {
             Some(value) if value.is_empty() => continue,
             Some(value) => headers.push(((*key).to_string(), value.clone())),
             None => headers.push(((*key).to_string(), (*default_value).to_string())),
         }
     }
-    // 默认清单之外的自定义头：原样带上（空值同样表示不发）
+    // 默认清单（大小写不敏感）之外的自定义头：原样带上（空值同样表示不发）
     for (key, value) in overrides {
-        if DEFAULT_HEADERS.iter().any(|(name, _)| name == key) || value.is_empty() {
+        if DEFAULT_HEADERS
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case(key))
+            || value.is_empty()
+        {
             continue;
         }
         headers.push((key.clone(), value.clone()));
@@ -106,6 +130,19 @@ mod tests {
             .map(|(_, value)| value.as_str());
         assert_eq!(platform, Some("extension"));
         // 其余默认项不受影响
+        assert_eq!(headers.len(), DEFAULT_HEADERS.len());
+    }
+
+    #[test]
+    fn a_case_variant_override_replaces_the_default_instead_of_duplicating_it() {
+        let headers = merge_headers(&overrides(&[("user-agent", "Cline/9.9.9")]));
+        let values: Vec<&str> = headers
+            .iter()
+            .filter(|(key, _)| key.eq_ignore_ascii_case("User-Agent"))
+            .map(|(_, value)| value.as_str())
+            .collect();
+        // 头名大小写不敏感：同义键只允许一个，值是覆盖值（不是默认值）
+        assert_eq!(values, vec!["Cline/9.9.9"]);
         assert_eq!(headers.len(), DEFAULT_HEADERS.len());
     }
 

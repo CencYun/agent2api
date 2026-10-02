@@ -91,6 +91,11 @@ use super::refresh;
 /// 上游按这个头判定「调用方是不是 Cline 自家产品」，缺了它免费池模型一律 403。
 /// 取 `cline-sdk` 而不是 `cline-cli`：实测 `cline-cli` 会让上游走另一条
 /// 兼容路径（回 500 `empty response content`），`cline-sdk` 是干净通过的那个。
+///
+/// 转发侧的头取值**引用本常量**（`headers::DEFAULT_HEADERS` 里的
+/// `X-CLIENT-TYPE` 一项），不另抄字面量：改这里就同时改了发出去的伪装头。
+/// 登录 / 目录 / 余额三条非转发链（`login` / `models` / `balance`）直接用本
+/// 常量拼头。
 pub const CLIENT_TYPE: &str = "cline-sdk";
 
 // 其余伪装头（User-Agent / X-CLIENT-VERSION / X-PLATFORM 等）的默认值集中在
@@ -213,6 +218,31 @@ impl ProviderAdapter for ClineAdapter {
         // 内容策略拦截（审核文案）→ ContentBlocked：不罚账号，交给编排层换中性
         // 提示词重试一次 + 触发降级（见 `core::degrade`）
         content_block::classify_or_fatal(status, error_body, message, None)
+    }
+
+    /// 从发送体读出随请求上行的思考等级（请求日志「上游等级」列的采集口）。
+    ///
+    /// ── 为什么必须覆写默认实现 ──────────────────────────────────
+    /// 采集（`payload::send_body` 的 `note_upstream_reasoning`）发生在
+    /// `build_chat_request` **之前**，而本家「客户端没给档位 → 默认 high」
+    /// 这一步是重建请求体时才写进字节的：不覆写，这一列会对这类请求恒为空，
+    /// 而线上确实发了 high（该列的语义是「实际发出去的档位」）。
+    ///
+    /// ── 取值链必须与 build_upstream_body 同源 ────────────────────
+    /// 默认实现读的是全项目展示用的**并集链**（`model_rules::read_client_level`，
+    /// 五键），比本家真正认的两个键宽 —— 只写 `effort`（CatPaw 的键）的请求
+    /// 会被显示成「发了 effort 那一档」，而本家实际发的是 high。这里改用
+    /// [`explicit_reasoning_effort`]（与重建体同一个函数），显示即字节。
+    ///
+    /// 另：**不**套用默认实现「关闭思考不算随行档位」的过滤 —— 本家把客户端
+    /// 写的 `off` / `none` 原样上行（移植语义，见 `build_upstream_body`），
+    /// 它在字节里，如实显示才是这一列的本意。
+    fn outbound_reasoning(&self, body: &Value) -> Option<String> {
+        Some(
+            explicit_reasoning_effort(body)
+                .unwrap_or(DEFAULT_REASONING_EFFORT)
+                .to_string(),
+        )
     }
 
     /// 取可用 access token：**凭证快照 + 临期主动刷新**（10 分钟窗口，
@@ -461,7 +491,9 @@ pub(crate) fn seed_defaults(pool: Pool) -> Option<String> {
 /// 构造上游请求头：固定四个（协议必需 + 动态任务标识）之后，伪装头
 /// （默认值 + 设置页逐键覆盖，见 `headers` 模块）**覆盖式**合并 ——
 /// 与 cline-proxy 的 `clineHeaders` 同一顺序：后写赢，用户可以覆盖任何
-/// 一个默认头，也可以新增默认清单之外的自定义头。
+/// 一个默认头，也可以新增默认清单之外的自定义头。**固定四个头在配置侧
+/// 就被挡住**（覆盖表里写它们由 `api::cline_headers` 返回 400，见那里的
+/// `FIXED_HEADERS`），这里的 upsert 只是同一条不变量的执行侧。
 fn build_chat_headers(token: &str, session_id: &str) -> Vec<(String, String)> {
     let mut headers = vec![
         ("Content-Type".to_string(), "application/json".to_string()),
@@ -501,7 +533,26 @@ const DEFAULT_MAX_TOKENS: i64 = 128_000;
 /// `reasoning_effort` 缺失时的默认档位（cline-proxy 同值）。
 const DEFAULT_REASONING_EFFORT: &str = "high";
 
+/// 客户端**显式**给的思考档位（`reasoning_effort` → 驼峰 `reasoningEffort`，
+/// 非空才算）：[`build_upstream_body`] 的默认值注入与
+/// [`ClineAdapter::outbound_reasoning`] 的显示共用的**同一条取值链** ——
+/// 两处各抄一份迟早分叉，而分叉的表现是「日志里说的与发出去的不是一个值」。
+fn explicit_reasoning_effort(body: &Value) -> Option<&str> {
+    let object = body.as_object()?;
+    let text = |key: &str| {
+        object
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|text| !text.trim().is_empty())
+    };
+    text("reasoning_effort").or_else(|| text("reasoningEffort"))
+}
+
 /// 白名单透传键（照抄 cline-proxy 的 `passThroughKeys`）：客户端传了才带上。
+///
+/// 注意这份清单就是**全部**能上行的可选键：入站协议层（`core::protocol`）产出的
+/// 顶层键里，Responses 的 `service_tier` 不在其中，会被这一层静默剔除（照抄
+/// 参照实现的口径 —— 那只对 OpenAI 自己的网关有意义）。
 const PASS_THROUGH_KEYS: &[&str] = &[
     "tools",
     "tool_choice",
@@ -542,7 +593,9 @@ const PASS_THROUGH_KEYS: &[&str] = &[
 ///
 /// 客户端显式给了小的 `max_tokens` 时不强制抬高 —— 上游在 max_tokens 太小
 /// 而模型要先输出一大段 reasoning 时会回 500 `empty response content`，
-/// 那是客户端自己的取舍（见模块头「500」一节）。
+/// 那是客户端自己的取舍（见模块头「500」一节）。但 `≤ 0` 的值不算「显式小
+/// 值」、按缺失处理（走 128000 默认）：参照实现会把 0 / 负数原样发出去，
+/// 那对上游只会是参数错误，没有「用户本意」可谈。
 fn build_upstream_body(body: &Value, session_id: &str) -> Value {
     let object = body.as_object();
     let get = |key: &str| object.and_then(|map| map.get(key));
@@ -560,16 +613,10 @@ fn build_upstream_body(body: &Value, session_id: &str) -> Value {
         .unwrap_or(DEFAULT_MAX_TOKENS);
     out.insert("max_tokens".to_string(), Value::from(max_tokens));
     out.insert("session_id".to_string(), Value::from(session_id));
-    let effort = get("reasoning_effort")
-        .and_then(Value::as_str)
-        .filter(|text| !text.trim().is_empty())
-        .or_else(|| {
-            get("reasoningEffort")
-                .and_then(Value::as_str)
-                .filter(|text| !text.trim().is_empty())
-        })
-        .unwrap_or(DEFAULT_REASONING_EFFORT);
-    out.insert("reasoning_effort".to_string(), Value::from(effort));
+    out.insert(
+        "reasoning_effort".to_string(),
+        Value::from(explicit_reasoning_effort(body).unwrap_or(DEFAULT_REASONING_EFFORT)),
+    );
     if let Some(messages) = get("messages") {
         out.insert("messages".to_string(), messages.clone());
     }
@@ -724,6 +771,39 @@ mod tests {
         assert!(names.contains(&"X-PLATFORM"));
         let task_id = headers.iter().find(|(key, _)| key == "X-Task-ID");
         assert_eq!(task_id.map(|(_, value)| value.as_str()), Some("sess_9"));
+    }
+
+    #[test]
+    fn a_same_name_header_is_replaced_not_appended() {
+        // 覆盖合并的语义：同名（大小写不敏感）替换。追加的话 reqwest 会发出
+        // 多值头（`headers_mut().append()`），上游看到的是两个值
+        let mut headers = vec![("X-PLATFORM".to_string(), "terminal".to_string())];
+        upsert_header(&mut headers, "x-platform".to_string(), "extension".to_string());
+        assert_eq!(headers, vec![("X-PLATFORM".to_string(), "extension".to_string())]);
+        // 默认清单之外的新头是追加
+        upsert_header(&mut headers, "X-Custom-Trace".to_string(), "abc".to_string());
+        assert_eq!(headers.len(), 2);
+    }
+
+    #[test]
+    fn the_reported_upstream_level_matches_what_is_actually_sent() {
+        // 客户端没给档位：线上发的是注入的默认 high，日志这一列也要报 high
+        let bare = json!({ "model": "cline-free/x" });
+        assert_eq!(
+            CLINE_FREE_ADAPTER.outbound_reasoning(&bare).as_deref(),
+            Some("high")
+        );
+        assert_eq!(
+            build_upstream_body(&bare, "sess_4")["reasoning_effort"],
+            "high"
+        );
+        // 客户端显式给了：两边都跟着客户端走（含本家原样上行的 off）
+        let explicit = json!({ "model": "cline-free/x", "reasoningEffort": "low" });
+        assert_eq!(
+            CLINE_FREE_ADAPTER.outbound_reasoning(&explicit).as_deref(),
+            Some("low")
+        );
+        assert_eq!(build_upstream_body(&explicit, "sess_5")["reasoning_effort"], "low");
     }
 
     // ── 429 人话时长 ──

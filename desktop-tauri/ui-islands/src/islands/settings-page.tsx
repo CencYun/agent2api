@@ -1162,6 +1162,13 @@ function clineRowsFrom(state: ClineHeadersState): ClineHeaderRow[] {
   return rows
 }
 
+/** 两张覆盖表是否等价（键集合 + 每个键的值，与键序无关） */
+function sameOverrides(a: Record<string, string>, b: Record<string, string>): boolean {
+  const keys = Object.keys(a)
+  if (keys.length !== Object.keys(b).length) return false
+  return keys.every(key => a[key] === b[key])
+}
+
 /**
  * Cline 伪装头面板：一张「头名 → 头值」的行编辑器。
  *
@@ -1196,8 +1203,11 @@ function ClineHeadersPanel({ snap }: { snap: SettingsSnapshot }) {
     return out
   }
 
-  const dirty =
-    ready && JSON.stringify(buildOverrides()) !== JSON.stringify(state.overrides)
+  // 与后端的覆盖表比「键值是否相同」，**不比对键序**：草稿按行顺序产出（默认行
+  // 在前、自定义行追加在后），而后端的 BTreeMap 是字典序 —— 串起来比字符串会让
+  // 「覆盖了某个默认头 + 加了一个排序在它前面的自定义头」这种组合在保存成功后
+  // 仍被判定为「有未保存的修改」，保存按钮一直亮着。
+  const dirty = ready && !sameOverrides(buildOverrides(), state.overrides)
 
   return (
     <section className='panel'>
