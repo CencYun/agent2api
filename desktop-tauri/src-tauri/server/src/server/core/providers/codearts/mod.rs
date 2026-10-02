@@ -34,6 +34,7 @@ use crate::server::core::account_store::AccountStore;
 use crate::server::core::upstream::ForwardOutcome;
 use crate::server::core::upstream::usage::RequestTelemetry;
 use crate::server::errors::GatewayError;
+use crate::server::logging;
 
 use super::adapter::{ChatRequestPlan, ProviderAdapter, UpstreamErrorClass};
 
@@ -121,7 +122,7 @@ impl ProviderAdapter for CodeArtsAdapter {
         _client_headers: &'a HeaderMap,
         proxy: Option<crate::server::core::proxies::ResolvedProxy>,
         stream: bool,
-        _telemetry: &'a std::sync::Arc<RequestTelemetry>,
+        telemetry: &'a std::sync::Arc<RequestTelemetry>,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<ForwardOutcome, GatewayError>> + Send + 'a>> {
         Box::pin(async move {
             // ① 凭据（含临期主动续期与写回）；代理沿用编排层为本账号解析出的那份
@@ -181,15 +182,43 @@ impl ProviderAdapter for CodeArtsAdapter {
                 chat_session_id: Some(session_id),
                 ..Default::default()
             };
-            let (url, headers, payload) =
-                match chat::build_upstream_request(models::DEFAULT_BASE_URL, &upstream_model, body.clone(), true, benefit, &profile, Some(&credential)) {
+            let (url, headers, payload) = {
+                // 客户端额度太小、而这个模型一定先思考时，抬到 +预留（实测形状与
+                // 三条边界见 `chat::reserve_for_thinking`）：不抬的话上游会把额度全
+                // 花在 reasoning 上，客户端收到一次"成功的空回答"。
+                let mut outbound = body.clone();
+                if let Some((from, to)) =
+                    chat::reserve_for_thinking(&mut outbound, model.max_output_tokens)
+                {
+                    logging::verbose(
+                        "[CodeArts]",
+                        &format!(
+                            "客户端 max_tokens {from} 撑不下这个模型的思考，抬到 {to}（该模型上限 {}）",
+                            if model.max_output_tokens > 0 {
+                                model.max_output_tokens.to_string()
+                            } else {
+                                "未声明".to_string()
+                            }
+                        ),
+                    );
+                }
+                match chat::build_upstream_request(
+                    models::DEFAULT_BASE_URL,
+                    &upstream_model,
+                    outbound,
+                    true,
+                    benefit,
+                    &profile,
+                    Some(&credential),
+                ) {
                     Ok(built) => built,
                     Err(error) => {
                         session.stop().await;
                         drop(permit);
                         return Err(error);
                     }
-                };
+                }
+            };
             let mut request = crate::server::core::egress::client_for(proxy.as_ref()).post(&url);
             for (name, value) in headers {
                 request = request.header(name.as_str(), value.as_str());
@@ -244,16 +273,25 @@ impl ProviderAdapter for CodeArtsAdapter {
                 if let Some(error) = read_error {
                     return Err(GatewayError::with_status(502, format!("CodeArts 上游流中断：{error}")));
                 }
-                return Ok(ForwardOutcome::Completion {
-                    body: chat::aggregate_sse(&all, &upstream_model)?,
-                });
+                let completion = chat::aggregate_sse(&all, &upstream_model)?;
+                // 用量旁路记账：聚合体里那份 usage 是上游给的，报一次进请求日志
+                // （流式那份由 `UsageSniffer` 负责，两条路都缺了就又是恒 0）
+                if let Some(usage) = completion.get("usage") {
+                    telemetry.report_usage(usage);
+                }
+                return Ok(ForwardOutcome::Completion { body: completion });
             }
 
             // ⑧ 流式：透传（上游已是 OpenAI chunk 形状），结束时释放会话与许可
             let (sender, receiver) = tokio::sync::mpsc::channel::<Result<bytes::Bytes, std::io::Error>>(64);
+            // usage 嗅探要活到这个任务里，而本函数是借用签名 —— 克隆一份 Arc
+            // （不是所有权转移：编排层那一份还要在收尾时读同一槽位）
+            let sniff_telemetry = telemetry.clone();
             crate::spawn_task(async move {
                 use futures::StreamExt;
+                let mut sniffer = chat::UsageSniffer::default();
                 if !prefetched.is_empty() {
+                    sniffer.feed(&prefetched, &sniff_telemetry);
                     if sender.send(Ok(bytes::Bytes::from(prefetched))).await.is_err() {
                         session.stop().await;
                         return;
@@ -261,10 +299,15 @@ impl ProviderAdapter for CodeArtsAdapter {
                 }
                 let mut rest = rest;
                 while let Some(item) = rest.next().await {
+                    // 只读地看一眼这一片里有没有 usage 帧，字节原样转发
+                    if let Ok(bytes) = item.as_ref() {
+                        sniffer.feed(bytes, &sniff_telemetry);
+                    }
                     if sender.send(item).await.is_err() {
                         break;
                     }
                 }
+                sniffer.finish(&sniff_telemetry);
                 // 客户端断开也会走到这里：idle 必须发，否则上游槽位悬着
                 session.stop().await;
                 drop(permit);
