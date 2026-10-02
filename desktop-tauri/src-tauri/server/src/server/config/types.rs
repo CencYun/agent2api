@@ -87,6 +87,20 @@ pub const KEY_DEBUG_MODE: &str = "debugMode";
 /// 转发层逐请求读快照，改完下一个请求立即生效，不重启进程。
 pub const KEY_SANITIZE_FINGERPRINTS: &str = "sanitizeBlacklistFingerprints";
 
+/// **Cline 转发头的逐键覆盖**（config.json 键）。
+///
+/// 形状：`{"User-Agent": "Cline/3.0.62", ...}`（string → string）。语义是
+/// **覆盖表**而非全量配置：Cline 上游请求的伪装头默认值硬编码在
+/// `core::providers::cline::headers`（与官方客户端形态对齐的那一套，含
+/// `X-CLIENT-TYPE: cline-sdk` 这类产品面校验头），这张表里**非空**的项按键
+/// 覆盖默认值（也可新增自定义头），**空串**的项表示「这个头不要发」——
+/// 于是「回到默认」与「删掉某个头」都是一次 PUT 就能表达的事。
+///
+/// 为什么默认值不进配置：与 `promptGatewayText` 同一取向 —— 默认值是代码里
+/// 的一等公民（上游行为收紧时跟着版本走），配置里只存用户**改过的**那部分，
+/// 存量安装不迁移、不回种。
+pub const KEY_CLINE_UPSTREAM_HEADERS: &str = "clineUpstreamHeaders";
+
 /// 机器人校验开关的键（config.json 键，ALTCHA proof-of-work，见 `server::altcha`）。
 ///
 /// **默认开启**：登录 / 注册是公开的认证边界，脚本可以无限打（暴破密码、

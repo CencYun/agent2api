@@ -398,6 +398,14 @@ pub fn panel_router(state: ServerState) -> Router {
             "/api/sanitize",
             get(api::sanitize::get_sanitize).put(api::sanitize::put_sanitize),
         )
+        // ── Cline 伪装头的逐键覆盖 ──
+        // 与 /api/sanitize 同形（GET 读 / PUT 写，响应体就是新状态），挂
+        // protected：头集合决定出站请求「长得像不像官方客户端」，敏感度同级。
+        // 默认值与合并语义见 `core::providers::cline::headers`。
+        .route(
+            "/api/cline/headers",
+            get(api::cline_headers::get_cline_headers).put(api::cline_headers::put_cline_headers),
+        )
         // ── 机器人校验开关 ──
         // 与 /api/sanitize 同形的单开关端点（GET 读 / PUT 写），挂 protected：
         // 它决定登录 / 注册是否要求 ALTCHA proof-of-work，敏感度同级。

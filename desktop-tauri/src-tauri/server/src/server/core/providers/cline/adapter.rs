@@ -41,7 +41,9 @@
 //!     限额冷却会让账号被无意义地冷却一整个窗口。**403 一律不重试**是这里
 //!     刻意的判断，理由见 `classify_error`；
 //!   - 404 `{"error":"model not found"}` → `Fatal`（模型名不对，换账号无用）；
-//!   - 429 → `QuotaLimited`（上游未给结构化恢复时间，`reset_at` 为 None）。
+//!   - 429 → `QuotaLimited`（上游未给结构化恢复时间，但错误文案里带人话时长
+//!     `"Try again in 17h 59m"` —— 解析成恢复时间戳填进 `reset_at`，见
+//!     [`parse_inference_cap_reset_at`]；解析不出仍是 None，下游走 10 分钟兜底）。
 //!
 //! ── 500 `empty response content` 不是错误分类问题 ────────────
 //! 实测：`max_tokens` 给小了（如 10）而模型要先输出一大段 reasoning 时，
@@ -80,6 +82,7 @@ use crate::server::errors::GatewayError;
 use crate::server::logging;
 
 use super::credentials;
+use super::headers;
 use super::models::{self, Pool};
 use super::refresh;
 
@@ -90,14 +93,9 @@ use super::refresh;
 /// 兼容路径（回 500 `empty response content`），`cline-sdk` 是干净通过的那个。
 pub const CLIENT_TYPE: &str = "cline-sdk";
 
-/// 客户端版本（进 User-Agent；实测非必需，但更贴近官方客户端形态）
-const CLIENT_VERSION: &str = "3.0.62";
-
-/// 客户端版本上报头（上游用它判定版本过旧）
-const CLIENT_VERSION_HEADER: &str = "X-CLIENT-VERSION";
-
-/// 桌面端版本（上游用它判定版本过旧）
-const CLIENT_VERSION_CODE: &str = "3.0.62";
+// 其余伪装头（User-Agent / X-CLIENT-VERSION / X-PLATFORM 等）的默认值集中在
+// `headers` 模块（可在设置页逐键覆盖，见 `headers::DEFAULT_HEADERS`），
+// 适配器只负责「固定头 + 覆盖合并」这一套顺序（见 `build_chat_headers`）。
 
 /// Cline 适配器：**按池参数化**（同一套实现，两个实例）。
 ///
@@ -135,9 +133,8 @@ impl ProviderAdapter for ClineAdapter {
 
     /// 构造 `POST {apiBase}/chat/completions`。
     ///
-    /// body **透传**（不改任何字段）：上游是 OpenAI 兼容的，模型名、tools、
-    /// stream 全部原样 —— 与小浣熊/AutoClaw 同档。模型名**含池前缀**
-    /// （`cline-free/...`），那是上游的通道选择器，绝不能剥（见 `models.rs`）。
+    /// body **白名单重建**（移植自 cline-proxy 的 `buildUpstreamBody`，见
+    /// [`build_upstream_body`]）：固定键注入默认值 + 白名单透传，不再是全量透传。
     ///
     /// `account` 是**会话形态**（`store.get_session_by_id` /
     /// `auth.get_current_session` 的返回值）：token 从 `auth.accessToken` 取，
@@ -161,28 +158,15 @@ impl ProviderAdapter for ClineAdapter {
                 "Cline 账号缺少 accessToken，无法转发（请重新登录或导入桌面端登录态）",
             ));
         }
-        let headers: Vec<(String, String)> = vec![
-            ("Content-Type".to_string(), "application/json".to_string()),
-            ("Accept".to_string(), "text/event-stream".to_string()),
-            (
-                "Authorization".to_string(),
-                format!("Bearer {}", credentials::ensure_token_prefix(token)),
-            ),
-            // 产品面标识（见模块头：缺了它免费池一律 403）
-            ("X-CLIENT-TYPE".to_string(), CLIENT_TYPE.to_string()),
-            ("User-Agent".to_string(), format!("Cline/{CLIENT_VERSION}")),
-            (
-                CLIENT_VERSION_HEADER.to_string(),
-                CLIENT_VERSION_CODE.to_string(),
-            ),
-            // 官方客户端会带这两个（OpenRouter 那套来源标记），带上更贴近官方面
-            ("HTTP-Referer".to_string(), "https://cline.bot".to_string()),
-            ("X-Title".to_string(), "Cline".to_string()),
-        ];
+        // session_id 每请求生成（`sess_<毫秒>`，与官方 CLI 同形态）：进 body 的
+        // `session_id` 与 `X-Task-ID` 头。401 刷新重试与 429 换号都会重走这里、
+        // 自然拿到新值；`send_with_retry` 的退避重发复用同一 transport（头不重建），
+        // 那是全项目一致的行为（workbuddy 的 X-Request-ID 同样如此）。
+        let session_id = format!("sess_{}", crate::server::logging::now_ms());
         Ok(ChatRequestPlan::chat(
             format!("{}/chat/completions", credentials::API_BASE_URL),
-            headers,
-            body.clone(),
+            build_chat_headers(token, &session_id),
+            build_upstream_body(body, &session_id),
         ))
     }
 
@@ -216,8 +200,11 @@ impl ProviderAdapter for ClineAdapter {
         }
         if status == 429 {
             return UpstreamErrorClass::QuotaLimited {
-                // 上游不给结构化的恢复时间（实测错误体里没有任何时间字段）
-                reset_at: None,
+                // 上游不给结构化的恢复时间（实测错误体里没有任何时间字段），但
+                // 错误文案里带人话时长（"Try again in 17h 59m"）—— 解析成恢复
+                // 时间戳交给编排层（Some 且未过期时直接采用，跳过 10 分钟兜底）；
+                // 解析不出维持 None（下游文案解析 → 10 分钟兜底的既有链路不变）。
+                reset_at: parse_inference_cap_reset_at(error_body),
                 message,
                 upstream_code: None,
                 status,
@@ -467,4 +454,318 @@ fn upstream_message(error_body: &Value) -> String {
 /// 一个藏在种子里、随刷新顺序漂移的隐规则。
 pub(crate) fn seed_defaults(pool: Pool) -> Option<String> {
     models::seed_cline_defaults(pool, &models::ids_of(pool))
+}
+
+// ─── 上游请求头（固定四个 + 伪装头覆盖合并）──────────────────
+
+/// 构造上游请求头：固定四个（协议必需 + 动态任务标识）之后，伪装头
+/// （默认值 + 设置页逐键覆盖，见 `headers` 模块）**覆盖式**合并 ——
+/// 与 cline-proxy 的 `clineHeaders` 同一顺序：后写赢，用户可以覆盖任何
+/// 一个默认头，也可以新增默认清单之外的自定义头。
+fn build_chat_headers(token: &str, session_id: &str) -> Vec<(String, String)> {
+    let mut headers = vec![
+        ("Content-Type".to_string(), "application/json".to_string()),
+        ("Accept".to_string(), "text/event-stream".to_string()),
+        (
+            "Authorization".to_string(),
+            format!("Bearer {}", credentials::ensure_token_prefix(token)),
+        ),
+        // 任务标识：与 body 的 `session_id` 同值（官方 CLI 的形态）
+        ("X-Task-ID".to_string(), session_id.to_string()),
+    ];
+    for (key, value) in headers::effective_headers() {
+        upsert_header(&mut headers, key, value);
+    }
+    headers
+}
+
+/// 覆盖式写头：同名（HTTP 头名大小写不敏感）**替换**而非追加 ——
+/// reqwest 对 `.header()` 的重复调用是追加出多值头，伪装头的覆盖语义
+/// 必须是替换（与 cline-proxy `http.Header.Set` 同语义）。
+fn upsert_header(headers: &mut Vec<(String, String)>, key: String, value: String) {
+    if let Some(slot) = headers
+        .iter_mut()
+        .find(|(name, _)| name.eq_ignore_ascii_case(&key))
+    {
+        slot.1 = value;
+    } else {
+        headers.push((key, value));
+    }
+}
+
+// ─── 上游请求体（白名单重建）────────────────────────────────
+
+/// `max_tokens` 缺失时的默认值（cline-proxy 同值）。
+const DEFAULT_MAX_TOKENS: i64 = 128_000;
+
+/// `reasoning_effort` 缺失时的默认档位（cline-proxy 同值）。
+const DEFAULT_REASONING_EFFORT: &str = "high";
+
+/// 白名单透传键（照抄 cline-proxy 的 `passThroughKeys`）：客户端传了才带上。
+const PASS_THROUGH_KEYS: &[&str] = &[
+    "tools",
+    "tool_choice",
+    "parallel_tool_calls",
+    "functions",
+    "function_call",
+    "temperature",
+    "top_p",
+    "top_k",
+    "stop",
+    "presence_penalty",
+    "frequency_penalty",
+    "response_format",
+    "user",
+    "n",
+    "logit_bias",
+    "seed",
+    "logprobs",
+    "top_logprobs",
+    "stream_options",
+    "metadata",
+];
+
+/// 上游请求体的**白名单重建**（移植自 cline-proxy 的 `buildUpstreamBody`）。
+///
+/// body 传进来时已经是「待发送的定稿」—— 模型名改写、提示词、脱敏都做完了
+/// （见 `core::upstream::payload` 的分层顺序），这里按 cline-proxy 的口径把它
+/// 收敛成上游认识的形状：
+///   - **固定键**：`model`（**原样保留** —— 含池前缀 `cline-free/...`，那是
+///     上游的通道选择器，绝不能剥，见 `models.rs`）、`max_tokens`（客户端
+///     `max_tokens` → `max_completion_tokens` → 默认 128000）、`session_id`
+///     （每请求生成的 `sess_<毫秒>`，与 `X-Task-ID` 头同值）、
+///     `reasoning_effort`（客户端 `reasoning_effort` / 驼峰 `reasoningEffort`
+///     显式值优先，否则默认 `high`）；
+///   - **保留**：`messages` 与 `stream`（上游恒为流式，编排层已强制写入）；
+///   - **白名单透传**：[`PASS_THROUGH_KEYS`] 里客户端传了的键原样带上，
+///     白名单之外的键不上游（上游是 OpenAI 兼容网关，未知键没有意义）。
+///
+/// 客户端显式给了小的 `max_tokens` 时不强制抬高 —— 上游在 max_tokens 太小
+/// 而模型要先输出一大段 reasoning 时会回 500 `empty response content`，
+/// 那是客户端自己的取舍（见模块头「500」一节）。
+fn build_upstream_body(body: &Value, session_id: &str) -> Value {
+    let object = body.as_object();
+    let get = |key: &str| object.and_then(|map| map.get(key));
+
+    let mut out = serde_json::Map::new();
+    if let Some(model) = get("model") {
+        out.insert("model".to_string(), model.clone());
+    }
+    // 数值统一按 f64 读（JSON 数字在手写体里可能是 8192.0 这类浮点形态）
+    let max_tokens = get("max_tokens")
+        .and_then(Value::as_f64)
+        .or_else(|| get("max_completion_tokens").and_then(Value::as_f64))
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .map(|value| value as i64)
+        .unwrap_or(DEFAULT_MAX_TOKENS);
+    out.insert("max_tokens".to_string(), Value::from(max_tokens));
+    out.insert("session_id".to_string(), Value::from(session_id));
+    let effort = get("reasoning_effort")
+        .and_then(Value::as_str)
+        .filter(|text| !text.trim().is_empty())
+        .or_else(|| {
+            get("reasoningEffort")
+                .and_then(Value::as_str)
+                .filter(|text| !text.trim().is_empty())
+        })
+        .unwrap_or(DEFAULT_REASONING_EFFORT);
+    out.insert("reasoning_effort".to_string(), Value::from(effort));
+    if let Some(messages) = get("messages") {
+        out.insert("messages".to_string(), messages.clone());
+    }
+    if let Some(stream) = get("stream") {
+        out.insert("stream".to_string(), stream.clone());
+    }
+    for key in PASS_THROUGH_KEYS {
+        if let Some(value) = get(key) {
+            out.insert((*key).to_string(), value.clone());
+        }
+    }
+    Value::Object(out)
+}
+
+// ─── 429 的人话时长解析（移植自 cline-proxy）─────────────────
+
+/// 从 Cline 429 错误体解析 `"Try again in 17h 59m"` 形式的等待时长，
+/// 返回**恢复时间戳**（毫秒；`now + 时长`）。解析不出返回 None。
+///
+/// 移植自 cline-proxy 的 `parseInferenceCapDuration`：在错误体序列化后的
+/// JSON 全文里找 `Try again in`（等价于扫原始 body —— 归一化层不会改写
+/// 文案本体），取到下一个 `"` / 换行 / `}` 为止的片段按人话时长解析。
+/// 命中时编排层（`rotate::mark_account_limited`）直接采用这个时间戳、
+/// 跳过 10 分钟兜底 —— Cline 免费额度撞限的真实冷却可达小时级，只按
+/// 兜底冷却会反复打无效请求。
+fn parse_inference_cap_reset_at(error_body: &Value) -> Option<i64> {
+    let text = serde_json::to_string(error_body).ok()?;
+    let duration_ms = parse_try_again_ms(&text)?;
+    Some(crate::server::logging::now_ms() + duration_ms)
+}
+
+/// `Try again in` 之后的片段（到下一个 `"` / 换行 / `}` 为止）→ 毫秒。
+fn parse_try_again_ms(text: &str) -> Option<i64> {
+    const MARKER: &str = "Try again in";
+    let index = text.find(MARKER)?;
+    let rest = &text[index + MARKER.len()..];
+    let end = rest.find(['"', '\n', '\r', '}']).unwrap_or(rest.len());
+    parse_human_duration_ms(rest[..end].trim())
+}
+
+/// 人话时长 → 毫秒。支持 `d` / `h` / `m` / `ms` / `s` 任意组合
+/// （`"17h 59m"`、`"1d 2h 30m"`、`"30s"`）。
+///
+/// 字节扫描移植自 cline-proxy 的 `parseHumanDuration`（不用 regex，避开
+/// 中文字符边界的 panic 风险，口径与 `errors::parse_quota_reset_at` 一致）：
+/// 未知字符重置累积（半截 token 不算数），总时长 ≤ 0 返回 None。
+fn parse_human_duration_ms(text: &str) -> Option<i64> {
+    let bytes = text.as_bytes();
+    let mut total_ms: i64 = 0;
+    let mut num: i64 = 0;
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'0'..=b'9' => {
+                num = num.saturating_mul(10).saturating_add((bytes[index] - b'0') as i64);
+            }
+            b'd' => {
+                total_ms = total_ms.saturating_add(num.saturating_mul(86_400_000));
+                num = 0;
+            }
+            b'h' => {
+                total_ms = total_ms.saturating_add(num.saturating_mul(3_600_000));
+                num = 0;
+            }
+            // "ms" 必须在裸 `m` 之前判（两个字符是一个单位）
+            b'm' if bytes.get(index + 1) == Some(&b's') => {
+                total_ms = total_ms.saturating_add(num);
+                num = 0;
+                index += 1;
+            }
+            b'm' => {
+                total_ms = total_ms.saturating_add(num.saturating_mul(60_000));
+                num = 0;
+            }
+            b's' => {
+                total_ms = total_ms.saturating_add(num.saturating_mul(1_000));
+                num = 0;
+            }
+            // 空格只是分隔符；其余未知字符重置累积（半截 token 不算数）
+            b' ' => {}
+            _ => num = 0,
+        }
+        index += 1;
+    }
+    (total_ms > 0).then_some(total_ms)
+}
+
+#[cfg(test)]
+mod tests {
+    //! 请求体白名单重建 / 伪装头合并 / 429 人话时长解析的纯函数测试
+    //! （移植 cline-proxy 行为时的对账基准，均不起网络、不依赖全局状态）。
+    use serde_json::json;
+
+    use super::*;
+
+    // ── build_upstream_body：默认值注入 ──
+
+    #[test]
+    fn a_bare_body_gets_session_id_max_tokens_and_effort_defaults() {
+        let out = build_upstream_body(&json!({"model": "cline-free/deepseek-v4.1-flash", "messages": []}), "sess_1");
+        assert_eq!(out["model"], "cline-free/deepseek-v4.1-flash");
+        assert_eq!(out["session_id"], "sess_1");
+        assert_eq!(out["max_tokens"], 128_000);
+        assert_eq!(out["reasoning_effort"], "high");
+        assert!(out.get("stream").is_none());
+        assert!(out.get("messages").is_some());
+    }
+
+    #[test]
+    fn client_explicit_values_win_over_the_defaults() {
+        let body = json!({
+            "model": "cline-free/x",
+            "max_tokens": 4096.0,
+            "max_completion_tokens": 8192.0,
+            "reasoningEffort": "low",
+            "stream": true,
+        });
+        let out = build_upstream_body(&body, "sess_2");
+        // max_tokens 优先于 max_completion_tokens；驼峰的 effort 也认
+        assert_eq!(out["max_tokens"], 4096);
+        assert_eq!(out["reasoning_effort"], "low");
+        assert_eq!(out["stream"], true);
+        // 驼峰键本身不上游
+        assert!(out.get("reasoningEffort").is_none());
+        assert!(out.get("max_completion_tokens").is_none());
+    }
+
+    #[test]
+    fn keys_outside_the_whitelist_do_not_reach_upstream() {
+        let body = json!({
+            "model": "cline-free/x",
+            "tools": [{"type": "function"}],
+            "temperature": 0.5,
+            "service_tier": "default",
+            "some_client_junk": {"a": 1},
+        });
+        let out = build_upstream_body(&body, "sess_3");
+        assert!(out.get("tools").is_some());
+        assert_eq!(out["temperature"], 0.5);
+        assert!(out.get("service_tier").is_none());
+        assert!(out.get("some_client_junk").is_none());
+    }
+
+    // ── build_chat_headers：固定头 + 覆盖合并 ──
+
+    #[test]
+    fn fixed_headers_come_first_and_disguise_headers_follow() {
+        let headers = build_chat_headers("tok", "sess_9");
+        let names: Vec<&str> = headers.iter().map(|(key, _)| key.as_str()).collect();
+        assert_eq!(&names[..4], &["Content-Type", "Accept", "Authorization", "X-Task-ID"][..]);
+        assert!(names.contains(&"X-CLIENT-TYPE"));
+        assert!(names.contains(&"X-PLATFORM"));
+        let task_id = headers.iter().find(|(key, _)| key == "X-Task-ID");
+        assert_eq!(task_id.map(|(_, value)| value.as_str()), Some("sess_9"));
+    }
+
+    // ── 429 人话时长 ──
+
+    #[test]
+    fn try_again_durations_in_all_unit_combinations_are_parsed() {
+        assert_eq!(parse_human_duration_ms("17h 59m"), Some(17 * 3_600_000 + 59 * 60_000));
+        assert_eq!(parse_human_duration_ms("1d 2h 30m"), Some(86_400_000 + 2 * 3_600_000 + 30 * 60_000));
+        assert_eq!(parse_human_duration_ms("30s"), Some(30_000));
+        assert_eq!(parse_human_duration_ms("17h"), Some(17 * 3_600_000));
+        assert_eq!(parse_human_duration_ms("500ms"), Some(500));
+        assert_eq!(parse_human_duration_ms("no duration here"), None);
+        assert_eq!(parse_human_duration_ms(""), None);
+    }
+
+    #[test]
+    fn the_wait_text_is_found_inside_a_json_error_body() {
+        let body = json!({"error": {"code": "INFERENCE_CAP_ERROR", "message": "Rate limited. Try again in 17h 59m."}});
+        let text = serde_json::to_string(&body).unwrap_or_default();
+        // 引号/句点截断不吞字：`59m.` 的句点落在单位字母之后，m 已结算
+        assert_eq!(parse_try_again_ms(&text), Some(17 * 3_600_000 + 59 * 60_000));
+    }
+
+    #[test]
+    fn a_429_with_a_parseable_wait_yields_a_future_reset_at() {
+        let body = json!({"error": "Too many requests. Try again in 1h 30m"});
+        let before = crate::server::logging::now_ms();
+        let classified = CLINE_FREE_ADAPTER.classify_error(429, &body);
+        let UpstreamErrorClass::QuotaLimited { reset_at, .. } = classified else {
+            panic!("429 应归类为 QuotaLimited");
+        };
+        let reset_at = reset_at.expect("带时长文案的 429 应给出恢复时间");
+        assert!(reset_at >= before + 90 * 60_000);
+    }
+
+    #[test]
+    fn a_429_without_wait_text_still_falls_back_to_none() {
+        let body = json!({"error": "Too many requests"});
+        let classified = CLINE_FREE_ADAPTER.classify_error(429, &body);
+        let UpstreamErrorClass::QuotaLimited { reset_at, .. } = classified else {
+            panic!("429 应归类为 QuotaLimited");
+        };
+        assert_eq!(reset_at, None);
+    }
 }

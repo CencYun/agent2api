@@ -50,6 +50,7 @@ import {
   shared,
   toast,
   type AppSettings,
+  type ClineHeadersData,
   type GatewayBlocks,
   type NumberField,
   type PromptPatch,
@@ -73,6 +74,7 @@ export type BusyScope =
   | 'queue'
   | 'debug'
   | 'sanitize'
+  | 'clineHeaders'
   | 'prompt'
   | 'captcha'
   | 'export'
@@ -101,6 +103,14 @@ export type DebugState = {
 }
 
 export type SanitizeState = { status: LoadStatus; on: boolean }
+
+/** Cline 伪装头：三份表（默认 / 覆盖 / 生效）都来自后端，界面据此渲染与判断改动 */
+export type ClineHeadersState = {
+  status: LoadStatus
+  defaults: Record<string, string>
+  overrides: Record<string, string>
+  effective: Record<string, string>
+}
 
 export type PromptState = {
   status: LoadStatus
@@ -192,6 +202,7 @@ export type SettingsSnapshot = {
   queue: NumericState
   debug: DebugState
   sanitize: SanitizeState
+  clineHeaders: ClineHeadersState
   prompt: PromptState
   storage: StorageState
   captcha: { available: boolean; enabled: boolean }
@@ -222,6 +233,7 @@ const INITIAL: SettingsSnapshot = {
   queue: { status: 'loading', values: null },
   debug: { status: 'loading', on: false, count: null, limit: null },
   sanitize: { status: 'loading', on: false },
+  clineHeaders: { status: 'loading', defaults: {}, overrides: {}, effective: {} },
   prompt: {
     status: 'loading',
     mode: 'passthrough',
@@ -890,6 +902,69 @@ export async function saveSanitize(next: boolean): Promise<void> {
   }
 }
 
+/* ─── Cline 伪装头（转发头的逐键覆盖）── */
+
+/** 非字符串值一律丢弃（后端只会给字符串，这里是给「形状不对的响应」兜底） */
+function asStringTable(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object') return {}
+  const out: Record<string, string> = {}
+  for (const [key, text] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof text === 'string') out[key] = text
+  }
+  return out
+}
+
+export function renderClineHeaders(data?: unknown): void {
+  if (data === undefined) return
+  if (!data || typeof data !== 'object') {
+    publish({ clineHeaders: { status: 'unavailable', defaults: {}, overrides: {}, effective: {} } })
+    return
+  }
+  const record = data as ClineHeadersData
+  publish({
+    clineHeaders: {
+      status: 'ready',
+      defaults: asStringTable(record.defaults),
+      overrides: asStringTable(record.overrides),
+      effective: asStringTable(record.effective),
+    },
+  })
+}
+
+async function loadClineHeaders(): Promise<void> {
+  try {
+    renderClineHeaders(await shared().workbuddyDesktop?.getClineHeaders())
+  } catch (error) {
+    console.warn('读取 Cline 伪装头失败:', errorMessage(error))
+    renderClineHeaders(null)
+  }
+}
+
+export async function refreshClineHeaders(): Promise<void> {
+  await loadClineHeaders()
+  toast('Cline 伪装头已刷新')
+}
+
+/**
+ * 整体替换覆盖表（与后端 PUT 同语义）：伪装头面板把编辑后的整张表提交 ——
+ * 默认行「值改回了默认」就不进表、值留空 = 该头不发、删掉的行 = 回落默认。
+ * 空表 = 全部回落默认（「恢复默认」按钮就是存一份空表）。
+ */
+export async function saveClineHeaders(overrides: Record<string, string>): Promise<void> {
+  if (busyScope) { repaint(); return }
+  beginBusy('clineHeaders')
+  try {
+    const saved = await shared().workbuddyDesktop?.saveClineHeaders(overrides)
+    renderClineHeaders(saved)
+    toast('✅ Cline 伪装头已保存')
+  } catch (error) {
+    toast(`保存失败: ${errorMessage(error)}`, 'err')
+    await loadClineHeaders() // 回滚到后端的真实值
+  } finally {
+    endBusy()
+  }
+}
+
 /* ─── 机器人校验（面板登录 / 注册的 ALTCHA 开关）── */
 
 async function loadCaptcha(): Promise<void> {
@@ -1415,6 +1490,7 @@ export async function load(): Promise<void> {
     loadQueue(),
     loadDebug(),
     loadSanitize(),
+    loadClineHeaders(),
     loadPrompt(),
     loadStorage(),
     loadCaptcha(),

@@ -455,6 +455,12 @@ const BRIDGE_JS: &str = r#"
     saveSanitize: enabled =>
       call('PUT', '/api/sanitize', { sanitizeBlacklistFingerprints: enabled === true }),
 
+    // ── Cline 伪装头 ──
+    // 与 getSanitize / saveSanitize 同形：GET 读（overrides + effective），
+    // PUT 整体替换覆盖表（空值 = 不发该头，删行 = 回落默认值）。
+    getClineHeaders: () => call('GET', '/api/cline/headers'),
+    saveClineHeaders: overrides => call('PUT', '/api/cline/headers', { overrides }),
+
     // ── 系统提示词与内容拦截降级 ──
     // 与 getRetry / saveRetry 同形：GET 读、PUT 写（允许部分字段），响应体是
     // 生效后的全量状态（含降级是否生效）。`clearDegrade` 是同一端点上的一个
