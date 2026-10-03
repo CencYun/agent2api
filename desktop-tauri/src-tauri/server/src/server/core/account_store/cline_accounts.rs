@@ -729,6 +729,14 @@ impl AccountStore {
             "maxConcurrent".to_string(),
             Value::from(max_concurrent_public(value.get("maxConcurrent"))),
         );
+        // 出网代理（账号级配置）：与其余八家的公开形态同形，前端代理列据此
+        // 回显「直连 / 代理池某条」。漏了它，即使记录里配了代理，界面也一律
+        // 显示「直连」——而转发其实照走代理（`session_from_record` 是全家
+        // 通用的，见 core::proxies 的模块头）。
+        out.insert(
+            "proxy".to_string(),
+            crate::server::core::proxies::describe_account_proxy(Some(&record.proxy())),
+        );
         Value::Object(out)
     }
 }
@@ -777,4 +785,55 @@ fn fingerprint(token: &str) -> String {
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
     format!("{hash:016x}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// 每条用例一个独立临时库（账号层测试碰的是真 SQLite）。
+    /// 守卫必须持有到用例结束，写法 `let (store, _db) = store("x");`。
+    fn store(label: &str) -> (AccountStore, crate::server::db::test_temp::TempDb) {
+        let (db, guard) =
+            crate::server::db::test_temp::TempDb::open(&format!("cline-accounts-{label}"));
+        (AccountStore::with_db(Some(db)), guard)
+    }
+
+    fn record(proxy: Value) -> StoredAccount {
+        StoredAccount::from_map(
+            json!({
+                "id": "cline-free-usr-01TEST",
+                "provider": "cline-free",
+                "account": "usr-01TEST",
+                "priority": 101,
+                "proxy": proxy,
+            })
+            .as_object()
+            .cloned()
+            .unwrap_or_default(),
+        )
+    }
+
+    /// 公开形态必须带上账号级代理配置 —— 前端代理列据此回显「直连 / 代理池某条」。
+    /// 漏了它，即使记录里配了代理，界面也一律显示「直连」（转发其实照走代理）。
+    #[test]
+    fn public_shape_carries_account_proxy() {
+        let (store, _db) = store("proxy-set");
+        let public = store.to_cline_public_account(&record(
+            json!({"source": "pool", "proxyId": "px_test_1"}),
+        ));
+        // 池条目在本测试的配置里不存在 → 解析失败是预期的，但 `config`
+        // 里必须原样带着 proxyId（前端靠它匹配下拉选项）
+        assert_eq!(public["proxy"]["source"], "pool");
+        assert_eq!(public["proxy"]["config"]["proxyId"], "px_test_1");
+    }
+
+    /// 未配代理时输出 null（与其余八家的公开形态同形），而不是缺键
+    #[test]
+    fn public_shape_has_null_proxy_when_unset() {
+        let (store, _db) = store("proxy-null");
+        let public = store.to_cline_public_account(&record(Value::Null));
+        assert!(public["proxy"].is_null());
+    }
 }
