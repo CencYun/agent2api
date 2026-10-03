@@ -694,6 +694,23 @@ impl AccountStore {
         out.insert("source".to_string(), Value::String(record.source()));
         out.insert("addedAt".to_string(), Value::from(record.added_at()));
         out.insert("updatedAt".to_string(), Value::from(record.updated_at()));
+        // ── `rateLimits`：限额冷却标记，**漏不得**（曾经的漏洞）──────────
+        // 它不是「给界面看的附加字段」，而是**选路的输入**：上游 429 之后
+        // 转发层把冷却写在记录里（`store_admin::mark_rate_limited`），选路侧
+        // 只在**公开形态**上读 `rateLimits[<上游真名>].resetAt` 判「这个账号
+        // 对这个模型还能不能用」（见 `routing::rate_limit_reset_at` /
+        // `is_rate_limited`）。这份手写的组装漏掉它 = 冷却写了也没人看得见：
+        // 已限额的账号每次都被优先选中、白撞一次 429 再降级 —— 2026-10-03 在
+        // 线上实测到的正是这个形态（13:47:55 记限额，13:48:04 又选了同一条）。
+        // 另外八家（raccoon / catpaw / accio / qoder / codearts / autoclaw /
+        // trae / zcode）的公开形态都带这个键，模块头的字段清单也一直写着它。
+        out.insert(
+            "rateLimits".to_string(),
+            value
+                .get("rateLimits")
+                .cloned()
+                .unwrap_or_else(|| Value::Object(Map::new())),
+        );
         out.insert(
             "available".to_string(),
             // 用 `has_credentials()` 而不是 `has_token()`：桌面端账号按设计不落
@@ -835,5 +852,91 @@ mod tests {
         let (store, _db) = store("proxy-null");
         let public = store.to_cline_public_account(&record(Value::Null));
         assert!(public["proxy"].is_null());
+    }
+
+    /// 加一条 Cline 账号，返回它的 id（顺带证明公开形态带 id）。
+    fn add(store: &AccountStore, account: &str) -> String {
+        let payload = serde_json::json!({
+            "accessToken": "workos:token-for-tests-only",
+            "account": account,
+        });
+        let saved = store
+            .add_cline_account("cline-free", &payload, None)
+            .expect("账号应当能加进来");
+        saved
+            .get("id")
+            .and_then(Value::as_str)
+            .expect("公开形态应当带 id")
+            .to_string()
+    }
+
+    /// 公开形态里的某条账号（按 id 找）。
+    fn public_account(store: &AccountStore, id: &str) -> Value {
+        store
+            .list_accounts()
+            .get("accounts")
+            .and_then(Value::as_array)
+            .and_then(|accounts| {
+                accounts
+                    .iter()
+                    .find(|item| item.get("id").and_then(Value::as_str) == Some(id))
+                    .cloned()
+            })
+            .expect("账号应当在列表里")
+    }
+
+    /// 429 冷却写进记录后，公开形态必须把它带出去 —— 漏了它就是「限额不生效」。
+    ///
+    /// 选路（`routing::is_rate_limited`）只在**公开形态**上查
+    /// `rateLimits[<上游真名>].resetAt`，而这份公开形态是手写组装的：漏掉这个键
+    /// 时冷却是「写进去了但没人看得见」—— 已限额的账号仍会被优先选中、白撞一次
+    /// 429 再降级。2026-10-03 线上实测到的正是这个形态：13:47:55 记下限额，
+    /// 13:48:04 的下一个请求又选了同一条账号，日志里「已限额…按优先级降级」
+    /// 连着出现两次。
+    ///
+    /// 冷却键取 `CooldownKeys`（与写入侧、判定侧同源）而不是写死字面量：将来
+    /// 真名解析若变（映射、别名），这条用例仍钉在「写进去的就能读出来」上。
+    #[test]
+    fn public_shape_carries_rate_limits() {
+        let (store, _db) = store("rate-limits");
+        let id = add(&store, "usr-rate-limit");
+
+        // 未限额时也要有键（空对象）：与别家的形状一致，界面与选路都不必再判
+        // 「键在不在」。这条同时把「漏键」钉死 —— 空对象和缺键在 JSON 里是两回事。
+        let fresh = public_account(&store, &id);
+        assert_eq!(
+            fresh
+                .get("rateLimits")
+                .and_then(Value::as_object)
+                .map(Map::len),
+            Some(0),
+            "未限额时应当是空对象（不是缺键）: {fresh}"
+        );
+
+        let keys = crate::server::core::routing::CooldownKeys::new("deepseek-v4.1-flash");
+        let wire = keys.for_account(&fresh);
+        store
+            .mark_rate_limited(
+                &id,
+                &wire,
+                429,
+                None,
+                None,
+                "上游返回 429: Daily free limit reached",
+            )
+            .expect("限额应当写进记录");
+
+        let account = public_account(&store, &id);
+        let entry = account
+            .get("rateLimits")
+            .and_then(|limits| limits.get(&wire))
+            .unwrap_or_else(|| panic!("公开形态必须带 rateLimits[{wire}]：{account}"));
+        assert_eq!(entry.get("status").and_then(Value::as_i64), Some(429));
+
+        // 最终判据：选路看到的就是「不可用（rate-limited）」
+        let now = crate::server::logging::now_ms();
+        let usability = crate::server::core::routing::account_usability(&account, &keys, now);
+        assert!(!usability.usable, "限额账号在选路里必须不可用: {account}");
+        assert_eq!(usability.reason, Some("rate-limited"));
     }
 }
