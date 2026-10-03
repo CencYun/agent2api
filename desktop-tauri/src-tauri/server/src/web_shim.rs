@@ -634,6 +634,19 @@ pub fn shim_js() -> &'static str {
       return call('PUT', '/api/sanitize', { sanitizeBlacklistFingerprints: enabled === true });
     },
 
+    // ── Cline 伪装头（转发头逐键覆盖）──
+    // 与桌面桥（src/bridge.rs 的 getClineHeaders / saveClineHeaders）同一映射。
+    // 这两个方法曾经漏在网页桥里：设置页调用 `getClineHeaders` 抛
+    // 「不是函数」，面板因此一直显示「不可用」——后端接口本身是好的，
+    // 缺的只是这座桥。
+    getClineHeaders: function () { return call('GET', '/api/cline/headers'); },
+    saveClineHeaders: function (overrides) {
+      // 整体替换覆盖表（非增量 merge），与后端 PUT 同语义；界面传的就是
+      // 「编辑后的整张表」。返回值与 GET 同形（后端 PUT 回的就是那份三表），
+      // 界面拿它直接重画。
+      return call('PUT', '/api/cline/headers', { overrides: overrides || {} });
+    },
+
     // ── 系统提示词与内容拦截降级 ──
     getPrompt: function () { return call('GET', '/api/prompt'); },
     savePrompt: function (payload) {
