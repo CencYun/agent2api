@@ -34,6 +34,10 @@ import {
   SelectTrigger,
   SelectValue,
   Switch,
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
   cn,
 } from '@ui'
 import { formatTime, poolItemLabel, POOL_VALUE_PREFIX, shared, type AccountRecord, type UsageEntry } from './accounts-shared'
@@ -438,10 +442,11 @@ export function UsageCell({ account }: { account: AccountRecord }) {
  * 国际版 / Accio）邮箱当主名，其余昵称优先。更新前设置的旧备注没有标记，
  * 到设置里把备注名改一次值（同值提交不打标）即生效。
  *
- * 悬停气泡就是这一列的「详细信息」面板：**一行一条**（原生 title 的换行即多行
- * 气泡，不用为它引浮层组件）—— 邮箱、标识、备注名（未生效时气泡可查）、上游
- * 昵称、Token 尾号、更新时间、来源。隐藏账号名开关打开时邮箱 / 昵称在气泡里
- * 同样打码 —— 不给「悬停一下就绕过打码」的口子。
+ * 悬停气泡就是这一列的「详细信息」面板：**一行一条**，组件库 Tooltip 即现
+ * （原生 title 由浏览器控制出现时机与断行，两样都不合用）—— 邮箱、标识、
+ * 备注名（未生效时气泡可查）、上游昵称、Token 尾号、更新时间、来源。
+ * 隐藏账号名开关打开时邮箱 / 昵称在气泡里同样打码 ——
+ * 不给「悬停一下就绕过打码」的口子。
  */
 export function AccountCell({ account, namesHidden }: { account: AccountRecord; namesHidden: boolean }) {
   const ident = identifierOf(account)
@@ -453,7 +458,7 @@ export function AccountCell({ account, namesHidden }: { account: AccountRecord; 
   // 主名被邮箱 / 昵称占着，这里让它在气泡里可查
   const rawName = String(account.name || '').trim()
   const mask = (value: string): string => (namesHidden ? maskName(value) : value)
-  const title = [
+  const titleLines = [
     email && email !== name ? `邮箱 ${mask(email)}` : '',
     ident ? `${features.identifier} ${ident}` : '',
     !account.nameCustom && rawName && rawName !== email && rawName !== nickname
@@ -464,15 +469,32 @@ export function AccountCell({ account, namesHidden }: { account: AccountRecord; 
     account.tokenTail ? `Token 尾号 ${account.tokenTail}` : '',
     account.updatedAt ? `更新于 ${formatTime(account.updatedAt)}` : '',
     account.source ? `来源 ${account.source === 'imported' ? '旧数据导入' : '手动添加'}` : '',
-  ].filter(Boolean).join('\n')
+  ].filter(Boolean)
 
   const showEmail = email && email !== name
   const proxyError = account.proxy?.error
+  // 原生 title 的出现时机由浏览器/系统定（悬停约一秒才出，改不了），换成组件库
+  // Tooltip：Provider delay=0 悬停即现；Portal 渲染不被表格滚动容器裁剪；
+  // 内容一行一个 div（用户要的「一行一个信息」）。
+  const nameNode = titleLines.length ? (
+    <TooltipProvider delay={0}>
+      <Tooltip>
+        <TooltipTrigger render={<div className='acct-name' />}>
+          <span className='name'>{mask(name)}</span>
+        </TooltipTrigger>
+        <TooltipContent>
+          {titleLines.map((line, index) => <div key={index}>{line}</div>)}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  ) : (
+    <div className='acct-name'>
+      <span className='name'>{mask(name)}</span>
+    </div>
+  )
   return (
     <>
-      <div className='acct-name' title={title || undefined}>
-        <span className='name'>{mask(name)}</span>
-      </div>
+      {nameNode}
       {showEmail ? (
         <div className='acct-sub'>
           <span className='acct-email' title='账号邮箱'>{mask(email)}</span>
