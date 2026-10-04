@@ -43,7 +43,7 @@ use sha2::{Digest, Sha256};
 
 use crate::server::core::account_store::priority::next_free_priority;
 use crate::server::core::account_store::sql;
-use crate::server::core::account_store::state::StoredAccount;
+use crate::server::core::account_store::state::{mark_name_custom, StoredAccount};
 use crate::server::core::account_store::store::{AccountStore, AccountStoreError};
 use crate::server::core::account_store::store_util::{token_tail_of, truncate_chars};
 use crate::server::core::custom_providers;
@@ -145,6 +145,7 @@ impl AccountStore {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(|value| truncate_chars(value, MAX_NAME_CHARS));
+        let explicit = explicit_name.is_some();
         let record_name = explicit_name
             .or_else(|| {
                 existing
@@ -187,6 +188,7 @@ impl AccountStore {
             Value::String(provider_id.to_string()),
         );
         fields.insert("name".to_string(), Value::String(record_name.clone()));
+        mark_name_custom(&mut fields, explicit, existing.as_ref());
         fields.insert("apiKey".to_string(), Value::String(api_key.clone()));
         match base_url_override {
             Some(base_url) => {

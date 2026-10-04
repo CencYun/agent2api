@@ -63,6 +63,8 @@ function peersOf(account: AccountLike, all: AccountLike[]): AccountLike[] {
 }
 
 function labelOf(account: AccountLike | null | undefined): string {
+  // 设过备注名（nameCustom）用备注名，否则维持旧口径（分流理由见 displayNameOf）
+  if (account?.nameCustom === true && account?.name) return account.name
   return account?.nickname || account?.name || account?.id || ''
 }
 

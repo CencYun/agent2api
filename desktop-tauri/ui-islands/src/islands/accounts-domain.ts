@@ -39,7 +39,9 @@ type ProviderFeatures = {
   identifier: string
   /** 有效期落在记录里的哪个键（expiresAt / tokenExpiresAt） */
   expiry: string
-  /** 「这家的账号就该以邮箱报名字」（Qoder / AutoClaw 国际版），见 accountCell 的说明 */
+  /** 「这家的账号以邮箱报名字」（Qoder / AutoClaw 国际版 / Accio）。两处消费：
+   *  displayNameOf（**未设备注**账号的主名口径，设过备注的以备注名为主）与
+   *  models-fetch-modal 的 accountLabel（拉取模型的账号下拉） */
   emailAsName?: boolean
   /** 有没有「领体验套餐」这个动作（只有 ZCode 两家） */
   claim?: boolean
@@ -572,9 +574,21 @@ export function positionMap(all: AccountRecord[] | null | undefined): Map<string
 
 /* ─── 展示派生 ─────────────────────────────── */
 
-/** 账号展示名（昵称优先，退化到备注名 / 标识 / id） */
+/**
+ * 账号展示名。两条分支：
+ *   · 用户显式设置过备注名（nameCustom，后端在真正改到 name 时打标）—— 备注名恒为主名；
+ *   · 未设备注 —— 维持历史口径：「以邮箱报名字」的家（Qoder / AutoClaw 国际版 / Accio）
+ *     邮箱优先，其余昵称优先，再退备注名种子 / 标识 / id。
+ * 备注名种子与用户改的名在记录里无法区分，全靠 nameCustom 分流 —— 没有它，
+ * 「备注名优先」会让未设备注的账号顶掉邮箱 / 昵称，显示成建号时的种子值。
+ */
 export function displayNameOf(account: AccountRecord | null | undefined): string {
-  return account?.nickname || account?.name || identifierOf(account) || account?.id || ''
+  if (!account) return ''
+  const name = String(account.name || '').trim()
+  if (account.nameCustom === true && name) return name
+  const email = String(account.email || '').trim()
+  if (providerFeatures(providerOf(account)).emailAsName && email) return email
+  return account?.nickname || name || identifierOf(account) || account?.id || ''
 }
 
 /** 无有效恢复时间时的退化文案：它本身就是完整一句，调用方据此不再拼「，恢复时间：」 */

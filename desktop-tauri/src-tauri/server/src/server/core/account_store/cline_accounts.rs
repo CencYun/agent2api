@@ -48,7 +48,7 @@ use serde_json::{Map, Value};
 
 use crate::server::core::account_store::priority::next_free_priority;
 use crate::server::core::account_store::sql;
-use crate::server::core::account_store::state::StoredAccount;
+use crate::server::core::account_store::state::{mark_name_custom, StoredAccount};
 use crate::server::core::account_store::store::{AccountStore, AccountStoreError};
 use crate::server::core::account_store::store_util::{max_concurrent_public, token_tail_of, truncate_chars};
 use crate::server::core::account_store::{
@@ -307,6 +307,7 @@ impl AccountStore {
             "name".to_string(),
             Value::String(truncate_chars(&record_name, MAX_NAME_LENGTH)),
         );
+        mark_name_custom(&mut fields, name.is_some_and(|value| !value.trim().is_empty()), existing.as_ref());
         if !account.is_empty() {
             fields.insert(
                 "account".to_string(),
@@ -469,6 +470,7 @@ impl AccountStore {
             "name".to_string(),
             Value::String(truncate_chars(&record_name, MAX_NAME_LENGTH)),
         );
+        mark_name_custom(&mut fields, name.is_some_and(|value| !value.trim().is_empty()), existing.as_ref());
         if !credentials.account.is_empty() {
             fields.insert(
                 "account".to_string(),

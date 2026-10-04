@@ -433,44 +433,48 @@ export function UsageCell({ account }: { account: AccountRecord }) {
 /**
  * 账号：第一行名称，第二行邮箱（有才渲染），第三行只在异常时出现（代理不可用原因）。
  *
- * 标识（UID / userId）与 Token 尾号**不再上屏**（对「这条账号能不能用」没有信息量，
- * 却把副标题占掉大半），仍留在账号名的悬停提示里。健康说明放这一列而不是「状态」列：
- * 状态列只有几十像素，放不下必须读全的文案；账号列是唯一随列宽变化伸缩的一列。
+ * 主名走 displayNameOf：用户显式设置过备注名（nameCustom）时备注名恒为主名；
+ * 未设备注的账号维持历史口径 —— 邮箱系三家（Qoder / AutoClaw 国际版 / Accio）
+ * 邮箱当主名，其余昵称优先。曾经「邮箱恒当主名」让用户设置的备注名在这三家
+ * 的账号列永远上不了屏（用户实测），邮箱降为第二行 + 悬停气泡后两个诉求都成立。
  *
- * 第二行是**邮箱**（不是「桌面端」标签）：这一列要回答的是「这是谁的号」，而
- * AutoClaw 国际版这类网页登录建出来的账号，名字可能只是上游昵称，邮箱才认得出是谁。
- * 名字本身就是邮箱时不重复渲染。Qoder / AutoClaw 国际版反过来：邮箱当**主名**
- * （features.emailAsName），昵称不再占一行（要看就悬停）。
+ * 悬停气泡就是这一列的「详细信息」面板：邮箱、标识、上游昵称（与主名和邮箱都不同
+ * 时才重复给）、Token 尾号、更新时间、来源。隐藏账号名开关打开时邮箱 / 昵称在气泡里
+ * 同样打码 —— 不给「悬停一下就绕过打码」的口子。
  */
 export function AccountCell({ account, namesHidden }: { account: AccountRecord; namesHidden: boolean }) {
   const ident = identifierOf(account)
   const features = providerFeatures(providerOf(account))
   const name = displayNameOf(account) || '未命名账号'
   const email = String(account.email || '').trim()
-  const emailAsName = features.emailAsName && email ? email : ''
+  const nickname = String(account.nickname || '').trim()
+  // 记录里原样的备注名（未经 displayNameOf 的兜底链）：未设备注时它建号时就有种子值，
+  // 主名被邮箱 / 昵称占着，这里让它在气泡里可查
+  const rawName = String(account.name || '').trim()
+  const mask = (value: string): string => (namesHidden ? maskName(value) : value)
   const title = [
+    email && email !== name ? `邮箱 ${mask(email)}` : '',
     ident ? `${features.identifier} ${ident}` : '',
-    // 邮箱顶掉了名字的位置，名字（昵称 / 备注名）改从这里看；隐藏账号名开关打开时
-    // 连这里也不给 —— 否则悬停一下就能绕过打码，那个开关就白开了
-    emailAsName && name !== email && !namesHidden ? `账号名 ${name}` : '',
+    !account.nameCustom && rawName && rawName !== email && rawName !== nickname
+      ? `备注名 ${mask(rawName)}`
+      : '',
+    nickname && nickname !== name && nickname !== email ? `昵称 ${mask(nickname)}` : '',
     isDesktopAccount(account) ? '桌面端实时登录态（凭证每次从客户端登录态文件读取）' : '',
     account.tokenTail ? `Token 尾号 ${account.tokenTail}` : '',
     account.updatedAt ? `更新于 ${formatTime(account.updatedAt)}` : '',
     account.source ? `来源 ${account.source === 'imported' ? '旧数据导入' : '手动添加'}` : '',
   ].filter(Boolean).join('；')
 
-  const showEmail = !emailAsName && email && email !== name
-  const primary = emailAsName || name
-  const shown = namesHidden ? maskName(primary) : primary
+  const showEmail = email && email !== name
   const proxyError = account.proxy?.error
   return (
     <>
       <div className='acct-name' title={title || undefined}>
-        <span className='name'>{shown}</span>
+        <span className='name'>{mask(name)}</span>
       </div>
       {showEmail ? (
         <div className='acct-sub'>
-          <span className='acct-email' title='账号邮箱'>{namesHidden ? maskName(email) : email}</span>
+          <span className='acct-email' title='账号邮箱'>{mask(email)}</span>
         </div>
       ) : null}
       {proxyError ? (
