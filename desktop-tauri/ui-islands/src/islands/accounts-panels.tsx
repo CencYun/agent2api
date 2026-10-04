@@ -433,13 +433,14 @@ export function UsageCell({ account }: { account: AccountRecord }) {
 /**
  * 账号：第一行名称，第二行邮箱（有才渲染），第三行只在异常时出现（代理不可用原因）。
  *
- * 主名走 displayNameOf：用户显式设置过备注名（nameCustom）时备注名恒为主名；
- * 未设备注的账号维持历史口径 —— 邮箱系三家（Qoder / AutoClaw 国际版 / Accio）
- * 邮箱当主名，其余昵称优先。曾经「邮箱恒当主名」让用户设置的备注名在这三家
- * 的账号列永远上不了屏（用户实测），邮箱降为第二行 + 悬停气泡后两个诉求都成立。
+ * 主名走 displayNameOf 的纯 nameCustom 分流：显式设置过备注名（打标）的账号
+ * 备注名恒为主名；未打标的账号维持历史口径 —— 邮箱系三家（Qoder / AutoClaw
+ * 国际版 / Accio）邮箱当主名，其余昵称优先。更新前设置的旧备注没有标记，
+ * 到设置里把备注名改一次值（同值提交不打标）即生效。
  *
- * 悬停气泡就是这一列的「详细信息」面板：邮箱、标识、上游昵称（与主名和邮箱都不同
- * 时才重复给）、Token 尾号、更新时间、来源。隐藏账号名开关打开时邮箱 / 昵称在气泡里
+ * 悬停气泡就是这一列的「详细信息」面板：**一行一条**（原生 title 的换行即多行
+ * 气泡，不用为它引浮层组件）—— 邮箱、标识、备注名（未生效时气泡可查）、上游
+ * 昵称、Token 尾号、更新时间、来源。隐藏账号名开关打开时邮箱 / 昵称在气泡里
  * 同样打码 —— 不给「悬停一下就绕过打码」的口子。
  */
 export function AccountCell({ account, namesHidden }: { account: AccountRecord; namesHidden: boolean }) {
@@ -463,7 +464,7 @@ export function AccountCell({ account, namesHidden }: { account: AccountRecord; 
     account.tokenTail ? `Token 尾号 ${account.tokenTail}` : '',
     account.updatedAt ? `更新于 ${formatTime(account.updatedAt)}` : '',
     account.source ? `来源 ${account.source === 'imported' ? '旧数据导入' : '手动添加'}` : '',
-  ].filter(Boolean).join('；')
+  ].filter(Boolean).join('\n')
 
   const showEmail = email && email !== name
   const proxyError = account.proxy?.error

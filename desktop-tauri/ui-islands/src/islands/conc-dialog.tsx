@@ -12,7 +12,7 @@ import {
   Input,
   Label,
 } from '@ui'
-import { providerFeatures, providerOf } from './accounts-domain'
+import { displayNameOf, providerFeatures, providerOf } from './accounts-domain'
 import type { AccountRecord } from './accounts-shared'
 
 /**
@@ -52,9 +52,8 @@ function ConcDialog({ account, onClose }: ConcDialogProps) {
   const [value, setValue] = React.useState(String(Number(account.maxConcurrent) || 0))
   const [saving, setSaving] = React.useState(false)
   const [hint, setHint] = React.useState('')
-  // 设过备注名（nameCustom）用备注名，否则维持旧口径（分流理由见 displayNameOf）
-  const name = account.nameCustom === true && account.name ? account.name
-    : account.nickname || account.name || account.id
+  // 与账号列同一取名口径（displayNameOf 内含 nameCustom / emailAsName 分流）
+  const name = displayNameOf(account) || account.id
 
   /**
    * ── 「0 = 不限」这一句要按家分岔 ────────────────────────────

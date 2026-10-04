@@ -575,12 +575,14 @@ export function positionMap(all: AccountRecord[] | null | undefined): Map<string
 /* ─── 展示派生 ─────────────────────────────── */
 
 /**
- * 账号展示名。两条分支：
- *   · 用户显式设置过备注名（nameCustom，后端在真正改到 name 时打标）—— 备注名恒为主名；
- *   · 未设备注 —— 维持历史口径：「以邮箱报名字」的家（Qoder / AutoClaw 国际版 / Accio）
+ * 账号展示名，纯 nameCustom 分流（两条线，不按家再分叉）：
+ *   · 用户显式设置过备注名（打标，见后端 apply_patch / mark_name_custom）—— 备注名恒为主名；
+ *   · 未打标 —— 维持历史口径：「以邮箱报名字」的三家（Qoder / AutoClaw 国际版 / Accio）
  *     邮箱优先，其余昵称优先，再退备注名种子 / 标识 / id。
  * 备注名种子与用户改的名在记录里无法区分，全靠 nameCustom 分流 —— 没有它，
  * 「备注名优先」会让未设备注的账号顶掉邮箱 / 昵称，显示成建号时的种子值。
+ * （中间版本试过「非邮箱系家名字优先」的放宽，好处是更新前的旧备注免重存生效，
+ *  代价是取名规则按家分叉、解释成本高 —— 已按用户决定回归纯标记这一条线。）
  */
 export function displayNameOf(account: AccountRecord | null | undefined): string {
   if (!account) return ''
