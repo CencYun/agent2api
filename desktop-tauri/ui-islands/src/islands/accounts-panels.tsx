@@ -35,6 +35,7 @@ import {
   SelectValue,
   Switch,
   Tooltip,
+  TooltipArrow,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
@@ -443,8 +444,10 @@ export function UsageCell({ account }: { account: AccountRecord }) {
  * 到设置里把备注名改一次值（同值提交不打标）即生效。
  *
  * 悬停气泡就是这一列的「详细信息」面板：**一行一条**，组件库 Tooltip 即现
- * （原生 title 由浏览器控制出现时机与断行，两样都不合用）—— 邮箱、标识、
- * 备注名（未生效时气泡可查）、上游昵称、Token 尾号、更新时间、来源。
+ * （原生 title 由浏览器控制出现时机与断行，两样都不合用），带指向箭头 ——
+ * 邮箱、标识、备注名（未生效时气泡可查）、上游昵称、更新时间、来源。
+ * 标识（UID / userId）与 Token 尾号不上屏也不进气泡：对「这条账号能不能用」
+ * 没有信息量（Token 尾号曾试过放在气泡里，用户实测反馈去掉）。
  * 隐藏账号名开关打开时邮箱 / 昵称在气泡里同样打码 ——
  * 不给「悬停一下就绕过打码」的口子。
  */
@@ -466,7 +469,6 @@ export function AccountCell({ account, namesHidden }: { account: AccountRecord; 
       : '',
     nickname && nickname !== name && nickname !== email ? `昵称 ${mask(nickname)}` : '',
     isDesktopAccount(account) ? '桌面端实时登录态（凭证每次从客户端登录态文件读取）' : '',
-    account.tokenTail ? `Token 尾号 ${account.tokenTail}` : '',
     account.updatedAt ? `更新于 ${formatTime(account.updatedAt)}` : '',
     account.source ? `来源 ${account.source === 'imported' ? '旧数据导入' : '手动添加'}` : '',
   ].filter(Boolean)
@@ -483,6 +485,7 @@ export function AccountCell({ account, namesHidden }: { account: AccountRecord; 
           <span className='name'>{mask(name)}</span>
         </TooltipTrigger>
         <TooltipContent>
+          <TooltipArrow />
           {titleLines.map((line, index) => <div key={index}>{line}</div>)}
         </TooltipContent>
       </Tooltip>
