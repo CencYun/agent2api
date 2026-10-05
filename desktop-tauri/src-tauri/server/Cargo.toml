@@ -96,3 +96,8 @@ bcrypt = "0.15"
 # 目标生效；其它平台该适配器的「导入桌面端登录态」是桩实现。
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = ["Win32_Security_Cryptography"] }
+
+[dev-dependencies]
+# 路由级测试用 `ServiceExt::oneshot` 直接打 Router（不占端口、不跑 serve），
+# 见 `server/http.rs` 的 CORS 用例。util 是 oneshot 所在的那个 feature。
+tower = { version = "0.5", features = ["util"] }

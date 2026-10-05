@@ -79,6 +79,8 @@ resp = client.chat.completions.create(
 print(resp.choices[0].message.content)
 ```
 
+**Pages running in a browser** (a self-built web UI, a single-file frontend app, …) that call this endpoint with `fetch` will fail with "cannot connect to the API": the gateway surface does **not** answer CORS by default, so the preflight (OPTIONS) lands on the API-key check and gets a 401 (a cross-origin preflight never carries the `Authorization` header) and the real request is never sent. Two ways out: ① turn on "Security → Gateway CORS" in Settings — the gateway then answers exactly like the panel does (preflight allowed, responses carry `Access-Control-Allow-*` with origin `*`, effective immediately). Note the gateway is the surface that really forwards upstream and spends quota: with `*` and no API key configured, any web page could drive your local gateway, so configure a "Gateway Key" as well; ② make the page same-origin — run a small local static server that also reverse-proxies `/v1` to `127.0.0.1:3065`, which removes cross-origin entirely and needs no relaxation at all.
+
 ---
 
 ## Docker Deployment
