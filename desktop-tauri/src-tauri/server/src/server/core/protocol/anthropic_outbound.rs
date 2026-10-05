@@ -690,6 +690,9 @@ impl ChatFromAnthropicStream {
         if self.finished {
             return Vec::new();
         }
+        if !self.started {
+            return self.fail_message("上游未返回有效 Anthropic 消息");
+        }
         self.finished = true;
         let mut out = self.start();
         let finish_reason = self.finish_reason.clone().unwrap_or_else(|| {
@@ -724,7 +727,6 @@ impl ChatFromAnthropicStream {
         if self.finished {
             return Vec::new();
         }
-        self.finished = true;
         let error = event.get("error").filter(|error| is_truthy(error));
         let message = match error {
             Some(error) => {
@@ -738,6 +740,15 @@ impl ChatFromAnthropicStream {
         } else {
             message
         };
+        self.fail_message(&message)
+    }
+
+    /// 将适配器检测到的协议错误转换为标准 chat 错误帧。
+    fn fail_message(&mut self, message: &str) -> Vec<bytes::Bytes> {
+        if self.finished {
+            return Vec::new();
+        }
+        self.finished = true;
         vec![
             chat_frame(&json!({
                 "error": { "message": message, "type": "upstream_error" },
@@ -774,5 +785,41 @@ impl ChatFromAnthropicStream {
             "model": self.model,
             "choices": [{ "index": 0, "delta": {}, "finish_reason": finish_reason }],
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ChatFromAnthropicStream;
+
+    #[test]
+    fn empty_upstream_stream_is_reported_as_an_error() {
+        let mut stream = ChatFromAnthropicStream::new("glm-5.3");
+        let output = stream
+            .finish()
+            .into_iter()
+            .map(|frame| String::from_utf8_lossy(&frame).into_owned())
+            .collect::<String>();
+
+        assert!(output.contains("\"error\""));
+        assert!(output.contains("上游未返回有效 Anthropic 消息"));
+        assert!(!output.contains("\"finish_reason\":\"stop\""));
+    }
+
+    #[test]
+    fn valid_message_stream_still_completes_normally() {
+        let mut stream = ChatFromAnthropicStream::new("glm-5.3");
+        let output = stream
+            .push(
+                b"data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"usage\":{\"input_tokens\":3}}}\n\n",
+            )
+            .into_iter()
+            .chain(stream.push(b"data: {\"type\":\"message_stop\"}\n\n"))
+            .map(|frame| String::from_utf8_lossy(&frame).into_owned())
+            .collect::<String>();
+
+        assert!(!output.contains("\"error\""));
+        assert!(output.contains("\"finish_reason\":\"stop\""));
+        assert!(output.contains("data: [DONE]"));
     }
 }
