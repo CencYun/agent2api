@@ -818,12 +818,32 @@ paintIcons();
 // 一整套弹窗交互，留在本文件会让这里继续膨胀。本文件只负责在 render()
 // 里委托它重画，并在首屏主动问一次后端状态。
 
-showPage(localStorage.getItem(PAGE_KEY) || 'overview', { persist: false });
+// ─── 初始页恢复：必须等 islands bundle 注册完 ───────────────
+// app.js 在 index.html 里排在 islands/ui.js **之前**，而各页面的数据加载由
+// showPage 里「切到某页时拉一次」完成。若在这里同步恢复上次页面，此刻 ui.js
+// 还没执行、wbSettingsPanel 等岛方法都不存在，`?.` 会把这次加载静默吞掉 ——
+// 恢复页是「设置」时，启动设置就永远停在「检测中…」（局域网开关随之显示
+// 默认值，看着像没保存）。DOMContentLoaded 在全部同步脚本执行完才触发，
+// 借它把初始切换对齐到「岛已就绪」之后，与用户手动切页完全同行为。
+const initialPage = localStorage.getItem(PAGE_KEY) || 'overview';
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => {
+    showPage(initialPage, { persist: false });
+    restorePortPanel();
+  }, { once: true });
+} else {
+  showPage(initialPage, { persist: false });
+  restorePortPanel();
+}
 
 refresh();
-// 首屏就问一次后端状态：此时 state 还没回来，侧栏两条状态各自显示
-// 「正在检查…」，拿到结果后立刻变成真值（端口冲突会直接给出失败原因）
-void window.wbPortPanel?.sync?.();
+
+/** 首屏问一次后端状态：此时 state 还没回来，侧栏两条状态各自显示
+ * 「正在检查…」，拿到结果后立刻变成真值（端口冲突会直接给出失败原因）。
+ * port-panel 也是岛，同样要等注册完，所以与初始页恢复放在一起。 */
+function restorePortPanel() {
+  void window.wbPortPanel?.sync?.();
+}
 
 /**
  * 启动即把更新状态铺一次：读**后端缓存**里的最近一次检查结果（定时任务按间隔

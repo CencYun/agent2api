@@ -151,6 +151,35 @@ fn body_object(body: &Bytes) -> Result<serde_json::Map<String, Value>, Response>
         .ok_or_else(|| errors::management_error(400, "请求体必须是 JSON 对象"))
 }
 
+/// 面板管理员已注册时，拒绝让「最后一把启用的 Key」消失（删除或停用）。
+///
+/// 管理员一注册，`/api/*` 就要求会话或 Key 认证（`require_api_key` 的
+/// panel_auth 分支），而桌面壳的管理请求靠自动携带第一把启用的 Key 通过
+/// 这道认证 —— 一把启用的都不剩时，壳会被自己的闸门挡在管理 API 外面，
+/// 界面整体不可用且无法自救（建 Key 也要先过闸门；headless 的网页面板
+/// 可以靠登录会话自救，桌面壳没有会话通道）。这是注册后世界里的保护性
+/// 约束：先建新的、再动旧的。注册前的免鉴权模式不受影响。
+fn guard_last_active_key(entries: &[api_keys::ApiKeyEntry], target_id: &str, action: &str) -> Result<(), Response> {
+    if !crate::server::access::panel_auth_enabled() {
+        return Ok(());
+    }
+    let Some(target) = entries.iter().find(|entry| entry.id == target_id) else {
+        return Ok(()); // 不存在的 id 交给原有的 404 路径
+    };
+    if !target.enabled {
+        return Ok(()); // 动的是已停用的 Key，启用数不会变
+    }
+    if entries.iter().filter(|entry| entry.enabled).count() > 1 {
+        return Ok(());
+    }
+    Err(errors::management_error(
+        400,
+        format!(
+            "面板管理员已注册，至少要保留一把启用的网关 Key（桌面端管理界面靠它访问）：请先创建新的 Key，再{action}这一把"
+        ),
+    ))
+}
+
 /// GET /api/keys
 pub async fn list_keys(State(state): State<ServerState>) -> Response {
     ok_json(list_json(&state))
@@ -205,6 +234,12 @@ pub async fn update_key(State(state): State<ServerState>, Path(id): Path<String>
         Ok(value) => value,
         Err(response) => return response,
     };
+    if let Some(false) = enabled {
+        // 停用受与删除同一道约束：它同样会让「启用的 Key」归零
+        if let Err(response) = guard_last_active_key(&api_keys::list(), &id, "停用") {
+            return response;
+        }
+    }
     match api_keys::update(&id, name, enabled, allowed_providers, allowed_models) {
         Ok(entry) => {
             logging::log(
@@ -219,6 +254,9 @@ pub async fn update_key(State(state): State<ServerState>, Path(id): Path<String>
 
 /// DELETE /api/keys/{id}
 pub async fn delete_key(State(state): State<ServerState>, Path(id): Path<String>) -> Response {
+    if let Err(response) = guard_last_active_key(&api_keys::list(), &id, "删除") {
+        return response;
+    }
     match api_keys::remove(&id) {
         Ok(()) => {
             let remaining = config::current().api_key_set();
