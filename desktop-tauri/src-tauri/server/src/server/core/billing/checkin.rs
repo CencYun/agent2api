@@ -265,7 +265,13 @@ pub async fn checkin_for(
             "id": id,
             "name": name,
             "claim": Value::Null,
-            "error": format!("{other} 的签到链路尚未接入"),
+            // 展示名走注册表：`other` 是 provider id，直接回显会得到
+            // 「workbuddy-intl 的签到链路尚未接入」这种读不出意思的文案
+            // （拆家后这条分支会先撞上国际版）。
+            "error": format!(
+                "{} 的签到链路尚未接入",
+                crate::server::core::providers::label_of(other)
+            ),
         }),
     }
 }
