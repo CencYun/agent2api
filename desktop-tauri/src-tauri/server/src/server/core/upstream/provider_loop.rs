@@ -96,6 +96,9 @@ use super::{
     MAX_ROUTE_ATTEMPTS,
 };
 
+#[cfg(test)]
+mod tests;
+
 /// 上游一次请求的失败（已分类 + 已构好给客户端的错误）。
 struct OutboundFailure {
     /// 适配器给出的分类（决定编排动作）
@@ -1805,7 +1808,7 @@ async fn sleep_or_cancel(
 
 /// 发一次上游请求，含「可退避重试」循环（次数 / 间隔来自设置页的全局重试设置）。
 ///
-/// 成功的定义是 HTTP 2xx —— 与改造前 `request_with_waf_retry` 一致。
+/// 默认以 HTTP 2xx 判成功；适配器可按响应头识别伪装成 2xx 的业务错误。
 ///
 /// 重试判定分两档：
 ///   - **适配器声明**（`retry_advice`）：provider 专属知识（workbuddy 的 11128），
@@ -1882,7 +1885,7 @@ async fn send_with_retry(
                 });
             }
         };
-        if response.status().is_success() {
+        if !adapter.is_error_response(response.status().as_u16(), response.headers()) {
             return Ok(response);
         }
         let status = response.status().as_u16();

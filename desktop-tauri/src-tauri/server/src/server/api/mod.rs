@@ -45,6 +45,9 @@ pub mod chat;
 pub mod cline_headers;
 pub mod codearts_welfare;
 pub mod config_api;
+// 网关面（`/v1/*`）跨域访问开关：`GET/PUT /api/cors`（与 `/api/sanitize`
+// 同形的单开关端点，见该文件模块头）
+pub mod cors;
 // 自定义提供商的管理接口（新建时顺带创建首个账号；存储与账号接入见
 // `core::custom_providers` 与 `core::account_store::custom_accounts`）
 pub mod custom_providers;

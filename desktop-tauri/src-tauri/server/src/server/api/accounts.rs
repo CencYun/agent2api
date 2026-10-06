@@ -570,6 +570,22 @@ pub async fn add_account(state: &ServerState, body: &Bytes) -> Response {
             }
             store.add_trae_account(&credential, import_name, "manual")
         }
+        // Loomy（讯飞）：**粘贴 session** → 手动添加（短信登录是另一条链路，
+        // `POST /api/session/login/loomy/sms/verify` → 同一个落账号入口
+        // `add_loomy_account`）。
+        //
+        // `importDesktop` 不提供：Loomy 的登录态在客户端自己的加密存储里，
+        // 没有 auth.json 那种稳定可读的文件形态 —— 给了入口只会稳定失败
+        // （与 Accio / ZCode 同一处境）。
+        Some(crate::server::core::providers::ProviderKind::Loomy) => {
+            if import_desktop {
+                return management_error(
+                    400,
+                    "Loomy 不支持导入桌面端登录态，请用「手机号验证码登录」或粘贴 session 添加账号",
+                );
+            }
+            store.add_loomy_account(&payload, import_name)
+        }
         // WorkBuddy 系的两家（国内版 / 国际版）：同一套凭证形态与落账号路径，
         // 差别只有归属 —— provider id 自己就是归属（拆家后不再从 payload 里的
         // `edition` 反推：那是账号的属性，而落哪一家是身份问题）。

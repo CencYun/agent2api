@@ -60,6 +60,7 @@ import {
   panelLogout,
   refreshDebug,
   refreshClineHeaders,
+  refreshCors,
   refreshPrompt,
   refreshQueue,
   refreshRetention,
@@ -70,6 +71,7 @@ import {
   removeProviderPrompt,
   removeRetryCode,
   renderDebug,
+  renderCors,
   renderPrompt,
   renderRetention,
   renderRetry,
@@ -81,6 +83,7 @@ import {
   restoreCategory,
   saveCaptcha,
   saveClineHeaders,
+  saveCors,
   saveDebug,
   savePromptFile,
   savePromptMode,
@@ -1353,6 +1356,41 @@ function SecurityPane({ snap }: { snap: SettingsSnapshot }) {
 
   return (
     <>
+      <section className='panel'>
+        <PanelHead
+          title='网关跨域访问（CORS）'
+          tip={TIPS.cors}
+          badge={snap.cors.status === 'ready'
+            // 极性与指纹脱敏相反：这个开关「关闭」才是不扩大暴露面的常态，
+            // 所以开着时给提醒色（bad），关着才是 ok
+            ? (snap.cors.on ? <StatusBadge tone='bad'>已开启</StatusBadge> : <StatusBadge tone='ok'>已关闭</StatusBadge>)
+            : snap.cors.status === 'unavailable'
+              ? <StatusBadge tone='bad'>不可用</StatusBadge>
+              : <StatusBadge tone='idle'>检测中…</StatusBadge>}
+          actions={<RefreshButton id='btn-cors-refresh' onClick={() => void refreshCors()} />}
+        />
+        <div className='panel-body'>
+          <div className='settings-switches'>
+            <SwitchRow
+              id='settings-cors'
+              label='允许浏览器里的页面跨来源调用网关（/v1/*）'
+              checked={snap.cors.on}
+              // 读到后端值之前不许切（同指纹脱敏：切了也不知道后端原本是什么）
+              disabled={snap.cors.status !== 'ready' || snap.busy === 'cors'}
+              onCheckedChange={next => void saveCors(next)}
+            />
+          </div>
+          <div className='settings-state'>
+            {snap.cors.status === 'loading'
+              ? STATES.appLoading
+              : snap.cors.status === 'unavailable'
+                ? STATES.corsUnavailable
+                : snap.cors.on ? STATES.corsOn : STATES.corsOff}
+          </div>
+          <div className='hint retention-note'>{NOTES.cors}</div>
+        </div>
+      </section>
+
       <section className='panel'>
         <PanelHead title='机器人校验' />
         <div className='panel-body'>

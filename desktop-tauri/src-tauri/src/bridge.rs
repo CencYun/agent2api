@@ -395,21 +395,33 @@ const BRIDGE_JS: &str = r#"
       const isObject = input && typeof input === 'object';
       const phone = String((isObject ? input.phone : input) || '');
       const provider = isObject && input.provider ? String(input.provider) : '';
-      return call('POST', '/api/session/login/sms/send', {
+      // Loomy 是**另一条链路**（自己的签名算法与站点，中间态叫 msgid 而不是
+      // deviceId），端点在服务端就是分开挂的；其余（AutoClaw 两地区）沿用既有
+      // 端点，`provider` 原样带上去由后端判地区。
+      const path = provider === 'loomy'
+        ? '/api/session/login/loomy/sms/send'
+        : '/api/session/login/sms/send';
+      return call('POST', path, {
         phone,
         ...(provider ? { provider } : {}),
       });
     },
-    verifySmsLogin: payload =>
-      call('POST', '/api/session/login/sms/verify', {
+    verifySmsLogin: payload => {
+      const provider = (payload && payload.provider) ? String(payload.provider) : '';
+      const path = provider === 'loomy'
+        ? '/api/session/login/loomy/sms/verify'
+        : '/api/session/login/sms/verify';
+      return call('POST', path, {
         phone: String((payload && payload.phone) || ''),
         code: String((payload && payload.code) || ''),
-        // deviceId / name 可选：空串会被后端当成一个真值带上去，
-        // 因此按「有值才带」整形（与其它命令的省略语义一致）
+        // deviceId（AutoClaw）/ msgid（Loomy）/ name 可选：空串会被后端当成一个
+        // 真值带上去，因此按「有值才带」整形（与其它命令的省略语义一致）
         ...((payload && payload.deviceId) ? { deviceId: String(payload.deviceId) } : {}),
+        ...((payload && payload.msgid) ? { msgid: String(payload.msgid) } : {}),
         ...((payload && payload.name) ? { name: String(payload.name) } : {}),
-        ...((payload && payload.provider) ? { provider: String(payload.provider) } : {}),
-      }),
+        ...(provider ? { provider } : {}),
+      });
+    },
 
     // ── 定时签到 ──
     getAutoCheckin: () => call('GET', '/api/auto-checkin'),

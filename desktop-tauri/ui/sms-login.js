@@ -37,8 +37,41 @@
     const codeInput = () => $(`${prefix}-sms-code`);
     const nameInput = () => $(`${prefix}-sms-name`);
 
-    /** 最近一次发码的 deviceId（发码成功后才写入，见下） */
-    let deviceId = '';
+    /**
+     * 按 provider 分的短信链路档案。
+     *
+     * ── 为什么要有这张表（两家形态不同，别合并）─────────────────
+     * 两条链路都是「发码 → 用码换登录态」，但换登录态时**要带回去的那个
+     * 中间态**不同、端点也不同：
+     *   - AutoClaw：上游把码绑在 device_id 上 → 请求字段 `deviceId`；
+     *   - Loomy：上游把码绑在发码响应的 msgid 上 → 请求字段 `msgid`
+     *     （`providers/loomy/login.rs` 的模块头有完整说明）。
+     * 手机号规则也略有差别：Loomy 只收 `1[3-9]` 开头（与它客户端同口径）。
+     *
+     * 落到未知 provider 时按 AutoClaw 走（历史行为），但界面上不会出现这种
+     * 组合 —— 只有配了 `smsLogin` 的家才会渲染这个块的按钮。
+     */
+    const SMS_PROFILES = {
+      autoclaw: {
+        send: '/api/session/login/sms/send',
+        verify: '/api/session/login/sms/verify',
+        ticketKey: 'deviceId',
+        phoneRe: /^1[2-9]\d{9}$/,
+        sentHint: '验证码已发送。收到后填入下方并点「登录并添加」',
+      },
+      loomy: {
+        send: '/api/session/login/loomy/sms/send',
+        verify: '/api/session/login/loomy/sms/verify',
+        ticketKey: 'msgid',
+        phoneRe: /^1[3-9]\d{9}$/,
+        sentHint: '验证码已发送。收到后填入下方并点「登录并添加」',
+      },
+    };
+    const profile = SMS_PROFILES[prefix] || SMS_PROFILES.autoclaw;
+    const PHONE_RE = profile.phoneRe;
+
+    /** 最近一次发码的中间态（deviceId / msgid，发码成功后才写入，见下） */
+    let ticket = '';
     /** 发码与登录共用一把锁：两个按钮都打上游，不能并点 */
     let busy = false;
 
@@ -105,7 +138,11 @@
      * 曾经这里按 provider 分叉出 6-15 位的国际规则，随入口一起删掉了 ——
      * 留着一条永远走不到的分支，只会让「手机号格式不对时该看哪段代码」变模糊。
      */
-    const PHONE_RE = /^1[2-9]\d{9}$/;
+    /**
+     * 验证码规则（两家同一条）。
+     *
+     * 手机号规则在 SMS_PROFILES 里按家给（Loomy 只收 `1[3-9]`，与它客户端同口径）。
+     */
     const CODE_RE = /^\d{6}$/;
 
     /**
@@ -176,16 +213,17 @@
       if (button) { button.disabled = true; button.textContent = '发送中…'; }
       setHint('');
       try {
-        // provider 照带：这条链路只服务国内版，但把值显式传上去之后，后端能对
-        // 「传了国际版」的请求给出明确拒绝，而不是静默发到国内版站点去
-        const data = await request('/api/session/login/sms/send', { phone, provider: prefix });
-        // ── deviceId 为什么要留住 ─────────────────────────────────
-        // 上游把「刚发的这个码」绑在发码时的 device_id 上，登录必须带同一个。
-        // 存在这个闭包里而不是每次现取，也不放进模块级状态 —— 它只在这两次
-        // 点击之间有意义，放进模块级会在用户切换提供商后串味。
-        deviceId = data?.deviceId || '';
+        // provider 照带：后端按它分派（AutoClaw 两地区 / Loomy 各一条链路），
+        // 未知值会得到明确拒绝而不是静默发到别的站点去
+        const data = await request(profile.send, { phone, provider: prefix });
+        // ── 中间态为什么要留住 ─────────────────────────────────────
+        // 上游把「刚发的这个码」绑在发码时的 device_id（AutoClaw）/ msgid
+        // （Loomy）上，登录必须带同一个。存在这个闭包里而不是每次现取，也不
+        // 放进模块级状态 —— 它只在这两次点击之间有意义，放进模块级会在用户
+        // 切换提供商后串味。
+        ticket = data?.[profile.ticketKey] || '';
         window.wbApp.toast('验证码已发送，请查看短信');
-        setHint('验证码已发送。收到后填入下方并点「登录并添加」');
+        setHint(profile.sentHint);
         // 成功也进冷却：官方口径（见 RESEND_COOLDOWN_SECONDS 的说明）
         startCooldown();
       } catch (error) {
@@ -216,16 +254,16 @@
       setHint('');
       try {
         const payload = { phone, code, provider: prefix };
-        // deviceId 缺省时不传：后端会现生成一个（上游接受「新设备直接登录」），
-        // 传空串反而会覆盖掉那个兜底
-        if (deviceId) payload.deviceId = deviceId;
+        // 中间态缺省时不传：后端会给出明确提示（Loomy 缺 msgid 时要求先发码），
+        // 传空串反而会覆盖掉那层判定的语义
+        if (ticket) payload[profile.ticketKey] = ticket;
         const name = nameInput()?.value.trim() || '';
         if (name) payload.name = name;
-        const data = await request('/api/session/login/sms/verify', payload);
+        const data = await request(profile.verify, payload);
         // 成功后清掉验证码（手机号留着：连加第二个账号时省一次输入）
         const codeNode = codeInput();
         if (codeNode) codeNode.value = '';
-        deviceId = '';
+        ticket = '';
         await config.onSuccess?.(data);
       } catch (error) {
         const reason = describeError(error);

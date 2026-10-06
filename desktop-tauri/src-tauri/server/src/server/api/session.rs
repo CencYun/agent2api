@@ -731,6 +731,76 @@ pub async fn login_sms_verify(State(state): State<ServerState>, body: Bytes) -> 
     }
 }
 
+// ─── Loomy 手机号验证码登录（两段）─────────────────────────
+
+/// 发送短信验证码（**Loomy 专用**，手机号验证码登录的第一步）。
+///
+/// ── 为什么这不是「网页登录」──────────────────────────────────
+/// Loomy 的账号体系（CAccount）没有网页授权码那套 —— 官方客户端唯一的自助
+/// 入口就是手机号 + 验证码（微信扫码那条需要讯飞侧登记的回调域名，网关复刻
+/// 不了，见 `providers/loomy/login.rs` 的模块头）。因此这里既不开窗口也不起
+/// 后台任务，就是**一次同步的上游调用**（带 HMAC-SHA1 签名头）。
+///
+/// body `{phone}` → `{msgid}`。
+///
+/// ── 为什么把 msgid 回给前端（与 AutoClaw 的 deviceId 同款）──
+/// 上游把「发的这个码」绑在发码响应的 msgid 上，登录必须带同一个 ——
+/// 但网关不替用户保存这个中间态（一次登录可以跨多次 HTTP 请求、也可以被
+/// 放弃，存在服务端只会多一份要清理的状态）。
+pub async fn login_loomy_sms_send(body: Bytes) -> Response {
+    let payload = parse_body(&body).unwrap_or(Value::Null);
+    let phone = payload.get("phone").and_then(Value::as_str).unwrap_or("");
+    match crate::server::core::providers::loomy::login::send_code(phone).await {
+        Ok(result) => ok_json(result),
+        Err(error) => management_error(error.status_code, error.message),
+    }
+}
+
+/// 用手机号 + 验证码登录并**直接落成账号**（**Loomy 专用**）。
+///
+/// body `{phone, code, msgid, name?}` → `{account, list}` —— 响应形状与
+/// `POST /api/accounts` **逐字一致**：登录只是另一种拿到凭证的方式，落盘、
+/// 命名、去重、优先级分配全部复用既有的添加路径（`add_loomy_account`），
+/// 前端因此可以直接把结果交给同一个「已添加账号」收尾逻辑。
+pub async fn login_loomy_sms_verify(State(state): State<ServerState>, body: Bytes) -> Response {
+    let payload = parse_body(&body).unwrap_or(Value::Null);
+    let phone = payload.get("phone").and_then(Value::as_str).unwrap_or("");
+    let code = payload.get("code").and_then(Value::as_str).unwrap_or("");
+    let msgid = payload.get("msgid").and_then(Value::as_str);
+    let credentials =
+        match crate::server::core::providers::loomy::login::login_with_code(phone, code, msgid).await
+        {
+            Ok(credentials) => credentials,
+            Err(error) => return management_error(error.status_code, error.message),
+        };
+    // 备注名：用户显式填的优先；没填则用脱敏手机号（`138****8000`）——
+    // 比默认的「Loomy 账号」更像用户自己认得出来的标识
+    let name = payload
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            credentials
+                .get("phoneTail")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        });
+    let store = state.store();
+    match store.add_loomy_account(&credentials, name.as_deref()) {
+        Ok(account) => {
+            let label = account
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("Loomy 账号");
+            logging::log("[Login]", &format!("✅ Loomy 登录成功: {label}"));
+            ok_json(json!({ "account": account, "list": store.list_accounts() }))
+        }
+        Err(error) => super::accounts::store_error(error),
+    }
+}
+
 // ─── AutoClaw OAuth 网页登录（国际版，三段）──────────────────
 
 /// 从请求体里读 OAuth 变体（`vendor` 字段：`zai` / `google`）。

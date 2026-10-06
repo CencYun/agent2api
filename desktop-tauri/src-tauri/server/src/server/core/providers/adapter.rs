@@ -452,6 +452,14 @@ pub trait ProviderAdapter: Send + Sync {
             .filter(|level| !crate::server::core::model_rules::reasoning_is_off(level))
     }
 
+    /// 响应头是否表明上游错误；默认沿用 HTTP 非 2xx 的判定。
+    ///
+    /// 部分流式上游用 HTTP 200 + application/json 返回业务错误，适配器可
+    /// 在成功流交给客户端之前将它送入既有错误读取、分类与账号轮换流程。
+    fn is_error_response(&self, status: u16, _headers: &HeaderMap) -> bool {
+        !(200..300).contains(&status)
+    }
+
     /// 判定上游错误类型（status + 已解析的错误体）。
     ///
     /// `error_body` 是**已归一化**的错误对象：至少含 `code`（上游业务码，
@@ -972,6 +980,9 @@ pub fn adapter_for(kind: ProviderKind) -> &'static dyn ProviderAdapter {
         ProviderKind::Zcode => &super::zcode::adapter::ZCODE_ADAPTER,
         ProviderKind::ZcodeIntl => &super::zcode::adapter::ZCODE_INTL_ADAPTER,
         ProviderKind::Trae => &super::trae::adapter::TRAE_ADAPTER,
+        // Loomy（讯飞）：无状态 OpenAI 兼容转发（token + Bearer 双头鉴权），
+        // 账号管理走手机号验证码登录（见 `loomy/mod.rs` 的模块头）
+        ProviderKind::Loomy => &super::loomy::LOOMY_ADAPTER,
     }
 }
 
@@ -1038,6 +1049,10 @@ pub fn implemented_kinds() -> Vec<ProviderKind> {
         // 不在的话刷新循环根本不会问它，症状是"界面上点了刷新、日志里
         // 一句 trae 都没有"（与"刷了但没取到"是两种完全不同的故障）。
         ProviderKind::Trae,
+        // Loomy 已接真身（登录 / 凭据 / 目录 / 转发 / 余额 / 每日积分刷新），
+        // 且有远程目录（`GET {网关}/api/v1/models`）—— 必须在列表里，
+        // 否则目录刷新循环不会问它。
+        ProviderKind::Loomy,
     ]
 }
 

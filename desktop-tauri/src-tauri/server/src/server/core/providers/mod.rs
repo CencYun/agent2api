@@ -116,6 +116,7 @@ pub mod content_block;
 /// 形态调用它 —— 挂在这里与其它子模块并列，便于对照「内置家走适配器、
 /// 自定义家走独立通道」的两条路径。
 pub mod custom;
+pub mod loomy;
 pub mod qoder;
 pub mod raccoon;
 pub mod refresh_flight;
@@ -308,6 +309,26 @@ pub enum ProviderKind {
     /// `core::auto_checkin` 的提供商清单不含本家。每日签到存在，但要单独授权
     /// 才会接（见 cpa-deploy/notes/agent2api-trae-port-plan.md 的 §8 决策 3）。
     Trae,
+    /// Loomy（讯飞系桌面客户端）。适配实现在 `loomy/`：账号管理（手机号验证码
+    /// 登录 / 粘贴 session）**加推理转发**（OpenAI 兼容、无状态、`token` +
+    /// `Bearer` 双头鉴权）。
+    ///
+    /// ── 上游长什么样（从安装包 app.asar 逆向，见 `loomy/mod.rs` 的模块头）──
+    /// 三套平面：账号 CAccount（`account.xfinfr.com`，HMAC-SHA1 签名头、密钥是
+    /// 客户端内置的 AccessKey 对）、集成网关（`loomyad.xunfei.cn`，积分与每日
+    /// 登录刷新）、模型网关（集成网关 + `/api/v1`，OpenAI 协议）。
+    ///
+    /// ── 两处与别家不同、值得先知道的事实 ───────────────────────
+    ///   1. **没有续期**（`supports_refresh = false`）：session 14 天，上游没有
+    ///      refresh 接口，过期只能重新短信登录；
+    ///   2. **没有桌面端导入**：登录态不在可读文件里（与 Accio / ZCode 同一
+    ///      处境），入口是「短信登录」与「粘贴 session」。
+    ///
+    /// ── 签到形态与别家不同 ──────────────────────────────────
+    /// 本家没有独立的签到接口，「每日赠送积分」由**每日首次登录**触发刷新
+    /// （`POST /api/v1/points/first-login`）。它已接进 `core::auto_checkin`
+    /// （清单里列 `loomy`），claim 见 `loomy::checkin`。
+    Loomy,
 }
 
 /// 一个提供商的静态元数据。
@@ -370,6 +391,8 @@ pub const PROVIDERS: &[ProviderMeta] = &[
     ProviderMeta { id: "zcode-intl", label: "ZCode 国际版" },
     ProviderMeta { id: "codearts", label: "CodeArts" },
     ProviderMeta { id: "trae", label: "Trae" },
+    // Loomy（讯飞）：单一地区、单一入口（手机号验证码登录），没有国际版伴生。
+    ProviderMeta { id: "loomy", label: "Loomy" },
 ];
 
 /// provider id 在注册表里的下标（未知 id → None）。
@@ -445,6 +468,7 @@ pub fn kind_from_id(id: &str) -> Option<ProviderKind> {
         "zcode-intl" => Some(ProviderKind::ZcodeIntl),
         "codearts" => Some(ProviderKind::CodeArts),
         "trae" => Some(ProviderKind::Trae),
+        "loomy" => Some(ProviderKind::Loomy),
         // 走到这里 = 上面的注册表判定已放行、这个 match 却没有对应分支：
         // 只可能是有人给 `PROVIDERS` 加了条目忘了加这里。开发期喊出来；
         // release 返回 None（见上：宁可为「未知」，不可误认成别家）。
@@ -478,6 +502,7 @@ pub const fn kind_id(kind: ProviderKind) -> &'static str {
         ProviderKind::ZcodeIntl => "zcode-intl",
         ProviderKind::CodeArts => "codearts",
         ProviderKind::Trae => "trae",
+        ProviderKind::Loomy => "loomy",
     }
 }
 

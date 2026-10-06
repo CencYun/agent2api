@@ -647,6 +647,12 @@ pub fn shim_js() -> &'static str {
       return call('PUT', '/api/cline/headers', { overrides: overrides || {} });
     },
 
+    // ── 网关面跨域访问（/v1/*，默认关）──
+    getCors: function () { return call('GET', '/api/cors'); },
+    saveCors: function (enabled) {
+      return call('PUT', '/api/cors', { corsEnabled: enabled === true });
+    },
+
     // ── 系统提示词与内容拦截降级 ──
     getPrompt: function () { return call('GET', '/api/prompt'); },
     savePrompt: function (payload) {

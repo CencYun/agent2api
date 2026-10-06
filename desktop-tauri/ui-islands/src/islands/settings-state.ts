@@ -76,6 +76,7 @@ export type BusyScope =
   | 'debug'
   | 'sanitize'
   | 'clineHeaders'
+  | 'cors'
   | 'prompt'
   | 'captcha'
   | 'export'
@@ -126,6 +127,9 @@ export type ClineHeadersState = {
   overrides: Record<string, string>
   effective: Record<string, string>
 }
+
+/** 网关面（/v1/*）跨域访问开关；与 SanitizeState 同形 */
+export type CorsState = { status: LoadStatus; on: boolean }
 
 export type PromptState = {
   status: LoadStatus
@@ -218,6 +222,7 @@ export type SettingsSnapshot = {
   debug: DebugState
   sanitize: SanitizeState
   clineHeaders: ClineHeadersState
+  cors: CorsState
   prompt: PromptState
   storage: StorageState
   captcha: { available: boolean; enabled: boolean }
@@ -271,6 +276,7 @@ const INITIAL: SettingsSnapshot = {
   debug: { status: 'loading', on: false, count: null, limit: null },
   sanitize: { status: 'loading', on: false },
   clineHeaders: { status: 'loading', defaults: {}, overrides: {}, effective: {} },
+  cors: { status: 'loading', on: false },
   prompt: {
     status: 'loading',
     mode: 'passthrough',
@@ -1169,6 +1175,43 @@ export async function saveClineHeaders(overrides: Record<string, string>): Promi
   }
 }
 
+/* ─── 网关面跨域访问（/v1/* 的 CORS，默认关）── */
+
+export function renderCors(data?: unknown): void {
+  if (data === undefined) return
+  if (!data || typeof data !== 'object') {
+    publish({ cors: { status: 'unavailable', on: false } })
+    return
+  }
+  const record = data as Record<string, unknown>
+  publish({ cors: { status: 'ready', on: record.corsEnabled === true } })
+}
+
+async function loadCors(): Promise<void> {
+  try {
+    renderCors(await shared().workbuddyDesktop?.getCors())
+  } catch (error) {
+    console.warn('读取网关跨域访问设置失败:', errorMessage(error))
+    renderCors(null)
+  }
+}
+
+export async function saveCors(next: boolean): Promise<void> {
+  if (busyScope) { repaint(); return }
+  beginBusy('cors')
+  publish({ cors: { status: 'ready', on: next } })
+  try {
+    const saved = await shared().workbuddyDesktop?.saveCors(next)
+    renderCors(saved)
+    toast(next ? '网关跨域访问已开启' : '已关闭网关跨域访问')
+  } catch (error) {
+    toast(`保存失败: ${errorMessage(error)}`, 'err')
+    await loadCors() // 回滚到后端的真实值
+  } finally {
+    endBusy()
+  }
+}
+
 /* ─── 机器人校验（面板登录 / 注册的 ALTCHA 开关）── */
 
 async function loadCaptcha(): Promise<void> {
@@ -1696,6 +1739,7 @@ export async function load(): Promise<void> {
     loadDebug(),
     loadSanitize(),
     loadClineHeaders(),
+    loadCors(),
     loadPrompt(),
     loadStorage(),
     loadCaptcha(),
@@ -1734,6 +1778,11 @@ export async function refreshDebug(): Promise<void> {
 export async function refreshSanitize(): Promise<void> {
   await loadSanitize()
   toast('指纹脱敏设置已刷新')
+}
+
+export async function refreshCors(): Promise<void> {
+  await loadCors()
+  toast('网关跨域访问设置已刷新')
 }
 
 export async function refreshPrompt(): Promise<void> {
