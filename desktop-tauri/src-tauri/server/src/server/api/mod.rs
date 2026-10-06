@@ -42,6 +42,7 @@ pub mod auto_checkin;
 pub mod billing;
 pub mod captcha;
 pub mod chat;
+pub mod cline_headers;
 pub mod codearts_welfare;
 pub mod config_api;
 // 网关面（`/v1/*`）跨域访问开关：`GET/PUT /api/cors`（与 `/api/sanitize`

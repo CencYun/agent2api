@@ -313,6 +313,20 @@ impl AccountStore {
                 // 恒为数字（无记录时 0）而不是缺键：界面按 `Number(...) || 0` 读，
                 // 两种形态都能吃，但恒定的形状让「字段缺失」与「值为 0」不再需要分开判。
                 fields.insert("checkinAt".to_string(), Value::from(record.checkin_at()));
+                // 用户显式设置过备注名（update_account 真正改到 name 时打的标，
+                // 见 apply_patch）。恒为布尔而不是缺键：界面据此决定「备注名赢过
+                // 邮箱 / 昵称等默认口径」还是「维持原展示行为」，两种形态都不必
+                // 再判「字段缺失」。
+                fields.insert(
+                    "nameCustom".to_string(),
+                    Value::Bool(
+                        record
+                            .fields()
+                            .get("nameCustom")
+                            .map(js_truthy)
+                            .unwrap_or(false),
+                    ),
+                );
                 Value::Object(fields)
             }
             // 各家形状恒为对象；真出现异常形态时原样透出，不在这里改语义

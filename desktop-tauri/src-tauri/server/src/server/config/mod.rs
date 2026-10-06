@@ -129,6 +129,14 @@ pub struct RuntimeConfig {
     /// 请求就生效，不重启进程），从 `Value` 里翻一次要处理类型判定，解析一次存
     /// 下来最省事 —— 这条判定在转发热路径上。
     sanitize_fingerprints: bool,
+    /// **Cline 转发头的逐键覆盖**（设置页「Cline 伪装头」）。
+    ///
+    /// 存的只是**用户改过的键**（覆盖表），默认值硬编码在
+    /// `core::providers::cline::headers`（与官方客户端形态对齐的那一套）。
+    /// 与 `debug_mode` 同一理由：Cline 适配器**每次构造上游请求**都要取它
+    /// （改完下一个请求就生效，不重启进程），解析一次存下来最省事。
+    /// 值语义：非空 = 按键覆盖/新增；空串 = 这个头不发（显式删除）。
+    cline_upstream_headers: std::collections::BTreeMap<String, String>,
     /// 网关面（`/v1/*`）跨域访问开关（设置页「安全 → 网关跨域访问」）。
     ///
     /// 与 `debug_mode` 同一理由：CORS 中间件逐请求判一次（改完开关下一个请求就
@@ -418,6 +426,9 @@ fn build(raw: Map<String, Value>) -> RuntimeConfig {
             .get(KEY_SANITIZE_FINGERPRINTS)
             .and_then(Value::as_bool)
             .unwrap_or(true),
+        // Cline 伪装头覆盖表：只收 string → string 的项（手改库写出数字/布尔
+        // 值的项直接忽略 —— 头值只会是文本），缺失 = 全默认
+        cline_upstream_headers: cline_headers_from(&raw),
         // 只有字面 `true` 算开启：**默认关**（缺失 → false）。开着 `*` 的网关面
         // 等于把「转发上游、消耗额度」的能力交给任何网页，所以宁可让用户显式打开
         // （见 KEY_CORS_ENABLED 的说明）；与 sanitize 的「默认开」取向相反，
@@ -447,6 +458,23 @@ fn build(raw: Map<String, Value>) -> RuntimeConfig {
             .filter(|envelope| !envelope.is_empty()),
         raw,
     }
+}
+
+/// `clineUpstreamHeaders` 的解析：`{"<header>": "<value>"}`，只收字符串值。
+///
+/// 容错口径与 `gateway_text_from` 相同：值不是字符串的项**跳过不报错**
+/// （头值只会是文本，手改库写出的数字/布尔没有意义），整体不是对象 = 没配。
+fn cline_headers_from(raw: &Map<String, Value>) -> std::collections::BTreeMap<String, String> {
+    let mut table = std::collections::BTreeMap::new();
+    let Some(object) = raw.get(KEY_CLINE_UPSTREAM_HEADERS).and_then(Value::as_object) else {
+        return table;
+    };
+    for (key, value) in object {
+        if let Some(text) = value.as_str() {
+            table.insert(key.trim().to_string(), text.to_string());
+        }
+    }
+    table
 }
 
 /// 从原始配置解析系统提示词设置（**在这里就把文件读完**，见字段说明）。
@@ -862,6 +890,25 @@ pub fn retry_settings() -> RetrySettings {
     RetrySettings::default()
 }
 
+/// 只取 Cline 伪装头覆盖表的轻量读取（**不克隆整份 raw**）。
+///
+/// 与 [`gateway_prompt_enabled`] 同一取舍：Cline 适配器每次构造上游请求都要
+/// 问一次「用户改了哪些头」，而 `current()` 会克隆整个 `raw` Map。返回的是
+/// **覆盖表**（用户改过的键），默认值与合并语义在
+/// `core::providers::cline::headers`。未初始化时给空表（= 全默认）。
+pub fn cline_upstream_overrides() -> Vec<(String, String)> {
+    if let Ok(guard) = CONFIG.read() {
+        if let Some(config) = guard.as_ref() {
+            return config
+                .cline_upstream_headers
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
+        }
+    }
+    Vec::new()
+}
+
 /// 用一个变换函数原子地更新配置（读 → 改 → 落库 → 回写内存）。
 ///
 /// `mutate` 只改内存快照；落库由本函数统一负责，避免两处都写库。
@@ -1237,6 +1284,29 @@ pub fn set_sanitize_fingerprints(enabled: bool) -> bool {
             .raw
             .insert(KEY_SANITIZE_FINGERPRINTS.to_string(), Value::Bool(enabled));
         config.sanitize_fingerprints = enabled;
+    })
+}
+
+// ─── Cline 伪装头覆盖表（clineUpstreamHeaders）────────────────
+
+/// 写入 Cline 伪装头的**整份覆盖表**（PUT 语义 = 整体替换）。
+///
+/// 与 `set_debug_mode` 同一模式：内存快照与 raw 底稿一起改 —— 前者让下一个
+/// 请求立刻用新值（适配器逐请求读快照），后者保证写盘时不吃掉配置里的
+/// 其它字段。空表 = 清掉所有覆盖（全部回落默认值）。调用方（`api::cline_headers`）
+/// 负责入参校验（键非空、值是字符串、数量与长度有界）。
+pub fn set_cline_upstream_headers(overrides: std::collections::BTreeMap<String, String>) -> bool {
+    let value = Value::Object(
+        overrides
+            .iter()
+            .map(|(key, text)| (key.clone(), Value::String(text.clone())))
+            .collect(),
+    );
+    update(|config| {
+        config
+            .raw
+            .insert(KEY_CLINE_UPSTREAM_HEADERS.to_string(), value.clone());
+        config.cline_upstream_headers = overrides;
     })
 }
 
