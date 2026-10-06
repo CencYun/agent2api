@@ -4,24 +4,24 @@
 
 Wraps the login state of several AI desktop clients into a local **OpenAI-compatible API gateway**, exposing a single `base_url` and bundling multi-provider account management, model management (enable / disable / delete / alias), content redaction, egress proxying and request reporting — plus a ready-to-run Tauri desktop app. Any OpenAI client that accepts a custom `base_url` can call these providers' model quota through `http://127.0.0.1:3065/v1` — no API key, no client source changes needed.
 
-```
-OpenAI client / any SDK
-        │  POST /v1/chat/completions   (OpenAI-compatible, SSE)
-        ▼
-  Agent2API gateway (in-process Rust service)   ← local 127.0.0.1:3065
-  model mapping · account candidate chain (global priority) · 429 fallback · egress proxy · content redaction
-        │  HTTPS (the model name decides which provider is called)
-        ├──▶ workbuddy  copilot.tencent.com (China) / www.workbuddy.ai (Global)
-        ├──▶ raccoon    xiaohuanxiong.com/api/web/llm/v2 · Authorization: Bearer <JWT>
-        ├──▶ catpaw     ai.catpaw.meituan.com · Cookie: X-Passport-Token=… + user-uid
-        │                (its own conversation session protocol)
-        ├──▶ autoclaw   autoglm-acceleration-api.zhipuai.cn/autoclaw-proxy/proxy/autoclaw
-        │                (domestic) X-Authorization: Bearer <token> (OpenAI-compatible)
-        ├──▶ autoclaw-intl  autoglm-api.autoglm.ai/autoclaw-proxy/proxy/autoclaw
-        │                (international) same protocol and signing fingerprint, different site
-        └──▶ qoder      api3.qoder.sh (Global) / gateway.qoder.com.cn (China)
-                         COSY self-signed headers (not Bearer) · envelope-style SSE (custom encoding and signing)
-```
+Reverse-proxy capabilities at a glance (✓ supported · ✗ not supported · — no such concept / not applicable):
+
+| Platform | LLM requests | Token auto-refresh | Model list (remote refresh) | Balance query | Daily check-in | Claims |
+| --- | :--: | :--: | :--: | :--: | :--: | :--: |
+| WorkBuddy (China) | ✓ | ✓ | ✓ remote + static fallback | ✓ | ✓ daily check-in | — |
+| WorkBuddy (Global) | ✓ | ✓ | ✓ remote + static fallback | ✓ | ✗ no check-in program | — |
+| Raccoon | ✓ | ✓ | ✓ remote + static fallback | ✓ | ✓ daily desktop-login points | — |
+| CatPaw | ✓ | ✗ no refresh flow | ✓ remote + static fallback | ✓ | ✗ | — |
+| AutoClaw (domestic / international) | ✓ | ✓ | ✓ remote + static fallback | ✓ | ✓ daily check-in | — |
+| Qoder | ✓ | ✓ | ✓ remote (per region) + static fallback | ✓ | ✓ China only | — |
+| Cline (Free / Pass) | ✓ | ✓ | ✓ remote + static fallback | ✓ | — | — |
+| Accio (international / domestic) | ✓ | ✓ | ✓ remote + static fallback | ✓ used-percent only | — | — |
+| ZCode (domestic / international) | ✓ | ✗ | ✗ static table | ✓ plan balance | — | ✓ timed plan (manual) |
+| CodeArts | ✓ | ✓ one-shot rotation | ✓ remote (three sources merged) | ✓ two ledgers | — | ✓ daily welfare (manual) |
+| Trae | ✓ | ✓ single-use rotation | ✓ remote only | ✓ two ledgers | — | — |
+| Custom providers | ✓ chat passthrough / Responses / Anthropic | — | ✓ manual + server-side fetch | — | — | — |
+
+The three chat entry points (`/v1/chat/completions`, `/v1/responses`, `/v1/messages`, plus `/v1/messages/count_tokens`) and `/v1/models` behave identically for every platform — the differences above are only about what each upstream can do. Model mapping, the global priority queue, 429 fallback, egress proxying, content redaction and request reporting apply to all platforms alike.
 
 > **This project is for learning and discussion only.** It reuses the login state of your own accounts through a local reverse proxy; forwarding requests in the shape of a non-official client may violate the upstream services' terms of service, and any risk (including rate limiting or account bans) is borne by the user. Commercial use and circumventing billing are prohibited. See [Usage Notice](#usage-notice) and [LICENSE](./LICENSE).
 >
@@ -46,7 +46,7 @@ OpenAI client / any SDK
 Download the installer from Releases (NSIS, Simplified Chinese, installs to `C:\Program Files\Agent2API` by default, and needs administrator approval during setup), then launch it — **no Node or any other runtime required**.
 
 1. First launch starts the local gateway (port 3065) inside the app process and opens the main window. If an older version's data directory or data files are found, a dialog walks you through the migration.
-2. Click "Add account" on the Accounts page, pick a provider (WorkBuddy / Raccoon / CatPaw / AutoClaw domestic / AutoClaw international / Qoder / Cline / Accio international / Accio domestic / CodeArts / Trae), then sign in or fill in credentials using whatever that vendor supports: web login, SMS code, pasting credentials, or importing this machine's desktop login state (importing stores no token — the gateway follows once the desktop client signs in again; CodeArts and Trae only offer web login and pasted credentials).
+2. Click "Add account" on the Accounts page, pick a provider (WorkBuddy / Raccoon / CatPaw / AutoClaw domestic / AutoClaw international / Qoder / Cline / Accio international / Accio domestic / ZCode domestic / ZCode international / CodeArts / Trae), then sign in or fill in credentials using whatever that vendor supports: web login, SMS code, pasting credentials, or importing this machine's desktop login state (importing stores no token — the gateway follows once the desktop client signs in again; CodeArts and Trae only offer web login and pasted credentials).
 3. Set your OpenAI client's `base_url` to `http://127.0.0.1:3065/v1` and put anything in `api_key` (for example `sk-local`; the server does not check it while authentication is disabled).
 
 Closing the window only minimizes to the tray by default, and the gateway keeps forwarding in the background; to quit for real, right-click the tray icon and choose "Exit".

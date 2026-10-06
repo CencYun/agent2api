@@ -4,29 +4,24 @@
 
 把多家 AI 桌面客户端的登录态包装成本地 **OpenAI 兼容 API 网关**，统一暴露一个 `base_url`，附带多提供商账号管理、模型管理（启停 / 删除 / 映射）、出站指纹脱敏、出网代理与请求报表，并提供一个开箱即用的 Tauri 桌面端。任何支持自定义 `base_url` 的 OpenAI 客户端都能以 `http://127.0.0.1:3065/v1` 为端点调用这几家的模型额度——不需要 API Key，不需要改客户端源码。
 
-```
-OpenAI 客户端 / 任意 SDK
-        │  POST /v1/chat/completions   （OpenAI 兼容，SSE）
-        ▼
-  Agent2API 网关（Rust 进程内服务）              ← 本机 127.0.0.1:3065
-  模型映射 · 账号候选链（全局优先级）· 429 降级 · 出网代理 · 出站指纹脱敏
-        │  HTTPS（按模型名决定去谁家）
-        ├──▶ workbuddy  copilot.tencent.com（国内版）/ www.workbuddy.ai（国际版）
-        ├──▶ raccoon    xiaohuanxiong.com/api/web/llm/v2 · Authorization: Bearer <JWT>
-        ├──▶ catpaw     ai.catpaw.meituan.com · Cookie: X-Passport-Token=… + user-uid
-        │                （自有 conversation 会话协议）
-        ├──▶ autoclaw   autoglm-acceleration-api.zhipuai.cn/autoclaw-proxy/proxy/autoclaw
-        │                （国内版）X-Authorization: Bearer <token>（OpenAI 兼容）
-        ├──▶ autoclaw-intl  autoglm-api.autoglm.ai/autoclaw-proxy/proxy/autoclaw
-        │                （国际版）同一套协议与签名指纹，站点不同
-        ├──▶ qoder      api3.qoder.sh（国际版）/ gateway.qoder.com.cn（中国版）
-        │                COSY 自签名头（不是 Bearer）· 信封式 SSE（自有编码与签名）
-        └──▶ cline      api.cline.bot · Authorization: Bearer workos:<JWT>
-                         X-CLIENT-TYPE: cline-sdk（缺了它免费池模型一律 403）
-                         模型名带池前缀：cline-pass/…（订阅池）· cline-free/…（免费池）
-                         （免费池另有两条不带前缀的裸 id：z-ai/glm-5.3-flash、
-                           poolside/laguna-s-2.1:free，归池按上游分组而非前缀）
-```
+各平台的反代能力一览（✓ 支持 · ✗ 不支持 · — 无此概念或不适用）：
+
+| 平台 | LLM 请求 | Token 自动续期 | 模型列表（远程刷新） | 余额查询 | 签到 | 领取类 |
+| --- | :--: | :--: | :--: | :--: | :--: | :--: |
+| WorkBuddy 国内版 | ✓ | ✓ | ✓ 远程 + 静态兜底 | ✓ | ✓ 每日签到 | — |
+| WorkBuddy 国际版 | ✓ | ✓ | ✓ 远程 + 静态兜底 | ✓ | ✗ 无签到活动 | — |
+| 小浣熊 | ✓ | ✓ | ✓ 远程 + 静态兜底 | ✓ | ✓ 桌面登录积分 | — |
+| CatPaw | ✓ | ✗ 无刷新机制 | ✓ 远程 + 静态兜底 | ✓ | ✗ | — |
+| AutoClaw（国内版 / 国际版） | ✓ | ✓ | ✓ 远程 + 静态兜底 | ✓ | ✓ 每日签到 | — |
+| Qoder | ✓ | ✓ | ✓ 远程（按地区）+ 静态兜底 | ✓ | ✓ 仅中国版 | — |
+| Cline（Free / Pass） | ✓ | ✓ | ✓ 远程 + 静态兜底 | ✓ | — | — |
+| Accio（国际版 / 国内版） | ✓ | ✓ | ✓ 远程 + 静态兜底 | ✓ 用量百分比 | — | — |
+| ZCode（国内版 / 国际版） | ✓ | ✗ | ✗ 静态表 | ✓ 套餐余额 | — | ✓ 限时套餐（手动） |
+| CodeArts | ✓ | ✓ 一次性轮换 | ✓ 远程（三源合并） | ✓ 两份账 | — | ✓ 每日福利（手动） |
+| Trae | ✓ | ✓ 一次一换 | ✓ 仅远程 | ✓ 两份账 | — | — |
+| 自定义提供商 | ✓ Chat 透传 / Responses / Anthropic | — | ✓ 手动登记 + 服务端拉取 | — | — | — |
+
+三条对话协议入口（`/v1/chat/completions`、`/v1/responses`、`/v1/messages`，另含 `/v1/messages/count_tokens`）与 `/v1/models` 对所有平台一视同仁，差异只在各家上游能不能做到表里那些事；模型映射、全局优先级队列、429 降级、出网代理、出站指纹脱敏与请求报表同样对全平台通用。
 
 > **本项目仅供学习与交流使用。** 它通过本地反向代理复用你自己账号的登录态，这种「以非官方客户端形态转发」的方式可能不符合上游服务的用户协议，使用风险（含账号被风控、封禁）由使用者自行承担；禁止用于商业用途或绕过计费。详见[使用声明](#使用声明)与 [LICENSE](./LICENSE)。
 >
@@ -51,7 +46,7 @@ OpenAI 客户端 / 任意 SDK
 从 Releases 下载安装包（NSIS，简体中文，默认装到 `C:\Program Files\Agent2API`，安装时需要管理员授权），安装后启动即可，**无需安装 Node 或任何其它运行时**。
 
 1. 首次启动即在应用进程内启动本机网关（端口 3065）并打开主窗口；若检测到旧版本的数据目录或数据文件，会弹窗提示迁移，按指引操作即可。
-2. 点「账号」页的「添加账号」，选提供商（WorkBuddy / 小浣熊 / CatPaw / AutoClaw 国内版 / AutoClaw 国际版 / Qoder / Cline / Accio 国际版 / Accio 国内版 / CodeArts / Trae），再按该家支持的方式完成登录或填写凭证：网页登录、手机验证码、粘贴凭证，或导入本机桌面端登录态（导入不落 token，客户端重新登录后网关自动跟上；CodeArts 与 Trae 只有网页登录与粘贴凭证两种）。
+2. 点「账号」页的「添加账号」，选提供商（WorkBuddy / 小浣熊 / CatPaw / AutoClaw 国内版 / AutoClaw 国际版 / Qoder / Cline / Accio 国际版 / Accio 国内版 / ZCode 国内版 / ZCode 国际版 / CodeArts / Trae），再按该家支持的方式完成登录或填写凭证：网页登录、手机验证码、粘贴凭证，或导入本机桌面端登录态（导入不落 token，客户端重新登录后网关自动跟上；CodeArts 与 Trae 只有网页登录与粘贴凭证两种）。
 3. 把 OpenAI 客户端的 `base_url` 填成 `http://127.0.0.1:3065/v1`，`api_key` 随便填（例如 `sk-local`，未启用鉴权时服务端不校验）。
 
 关闭窗口默认只是最小化到托盘，网关继续在后台转发；要彻底退出请在托盘图标上右键选「退出」。

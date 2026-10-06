@@ -127,6 +127,12 @@ pub(crate) fn refresh_meta(kind: ProviderKind) -> (bool, i64) {
             super::trae::models::remote_refreshed(),
             super::trae::models::last_refreshed_at(),
         ),
+        // Loomy 的清单来自 `GET {集成网关}/api/v1/models`（OpenAI 格式）。
+        // 上游**没有**内置兜底清单，所以「有内容」就等于「远程拉到过」。
+        ProviderKind::Loomy => (
+            super::loomy::models::remote_refreshed(),
+            super::loomy::models::last_refreshed_at(),
+        ),
     }
 }
 

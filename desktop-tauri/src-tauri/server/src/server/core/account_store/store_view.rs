@@ -242,6 +242,10 @@ impl AccountStore {
             // 所以这里没有 `is_trae_family` —— 将来接国际版时另立 kind、
             // 另开一个分支，不要往本家的记录上挂 `region` 字段。
             self.to_trae_public_account(record)
+        } else if record.provider() == super::LOOMY_PROVIDER_ID {
+            // Loomy（讯飞）：单一入口（手机验证码登录），公开形态带 userId /
+            // phone / session 尾四位的展示字段（见 `loomy_accounts.rs`）
+            self.to_loomy_public_account(record)
         } else if record
             .provider()
             .starts_with(crate::server::core::custom_providers::ID_PREFIX)

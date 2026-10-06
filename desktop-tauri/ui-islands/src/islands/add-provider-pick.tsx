@@ -69,6 +69,10 @@ const PROVIDER_ICONS: Record<string, string> = {
   'zcode-intl': 'assets/providers/zcode.png',
   codearts: 'assets/providers/codearts.png',
   trae: 'assets/providers/trae.png',
+  // Loomy：取自安装包 `resources/app.asar` 的 Windows 图标集
+  // （`build/icons/favicon-228.png`，与系统里显示的应用图标为同一张；
+  // 绿色圆底上的品牌形象）
+  loomy: 'assets/providers/loomy.png',
 }
 
 type CardItem = {

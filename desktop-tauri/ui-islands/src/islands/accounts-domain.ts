@@ -140,6 +140,16 @@ const PROVIDER_FEATURES: Record<string, ProviderFeatures> = {
   // 且它记的「签到钱包」与模型调用真正扣的积分池是两笔钱 —— 不给按钮，免得给一个
   // 点了必然报错（或报出一个对不上官方数字的余额）的入口。
   trae: { usage: true, checkin: false, edition: false, identifier: 'uid', expiry: 'expiresAt' },
+  // Loomy（讯飞）。三位各有出处：
+  // `usage: true` 对应 providers::loomy::balance —— 余额是**双账户**（永久积分 +
+  //   每日赠送积分，读 `GET /api/v2/points/records` 的摘要字段），界面上两张卡都列。
+  // `checkin: true` —— 本家**没有**独立签到接口，但「每日赠送积分」由每日首次登录
+  //   自动刷新（`POST /api/v1/points/first-login`），已接进自动签到框架
+  //   （见 providers::loomy::checkin 的模块头）。勾选框里的签到对它就是这个调用。
+  // `edition: false` —— 单一入口（手机验证码登录），没有国际版/地区概念。
+  // `expiry: 'expiresAt'` —— 落账号时按登录时刻 + 14 天估算（上游没有续期接口，
+  //   过期只能重新登录；这一列对它是「什么时候该重登」的提示）。
+  loomy: { usage: true, checkin: true, edition: false, identifier: 'userId', expiry: 'expiresAt' },
 }
 
 /**
