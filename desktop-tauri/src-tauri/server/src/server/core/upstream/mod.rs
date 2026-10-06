@@ -203,6 +203,15 @@ pub struct ForwardRequest {
     /// 本文件在 `server::core::upstream` 下，`super::key_scope` 指的是
     /// `server::core::upstream::key_scope`（不存在）—— 这里跨了一层模块。
     pub allowed_providers: Option<crate::server::core::key_scope::KeyScope>,
+    /// **只准用这个账号**转发（`None` = 走正常的全局优先级队列）。
+    ///
+    /// 目前唯一的调用方是模型测试（`api::model_test`）：它问的是「这一行的这个
+    /// 模型、用这个账号，现在到底行不行」，所以必须把选路收窄到一个账号上，
+    /// 并且**不顺延**（`pick_next_account` 在同池里找不到第二个候选）。
+    /// 生产链路一律传 `None` —— 这条字段不是「指定账号」的通用入口，
+    /// 它没有「账号被禁用 / 已被删除时换一个」的兜底语义（见
+    /// `rotate::accounts_in_providers` 的说明）。
+    pub pinned_account: Option<String>,
 }
 
 /// 转发结果：要么是可直接下发的流，要么是聚合好的 JSON
@@ -327,6 +336,9 @@ impl UpstreamService {
         // 会因为「同时持有 request 的可变借用（上面改过 body）」而借不过 ——
         // 移出后所有权清晰，也不必再多一次克隆。
         let key_scope = request.allowed_providers;
+        // 钉住的账号与它同样处理：ownership 移出来、借给 context，
+        // 于是 `request` 在下面不再被借用（理由同上一条）
+        let pinned_account = request.pinned_account;
         let context = payload::ProviderContext {
             body: &upstream_body,
             stream: request.stream,
@@ -335,6 +347,7 @@ impl UpstreamService {
             sanitize_fingerprints,
             prompt,
             key_scope: key_scope.as_ref(),
+            pinned_account: pinned_account.as_deref(),
         };
         provider_loop::forward_with_providers(self, context, &mut slot, &mut connections).await
     }

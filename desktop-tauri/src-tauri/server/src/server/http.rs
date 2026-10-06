@@ -365,6 +365,11 @@ pub fn panel_router(state: ServerState) -> Router {
         // 能力位覆盖（纠正对下游声明的那五个字段；只服务内置家，自定义家
         // 走 /api/custom-providers/models 的整表保存，见该 handler 的说明）
         .route("/api/models/capabilities", post(api::model_manage::set_capabilities))
+        // 模型测试（模型管理页操作列的「测试」）：会**真打上游、消耗额度**，
+        // 与 /v1/chat/completions 同一量级的接口，必须挂 protected。
+        // 结论失败也返回 2xx（上游的错误放在响应体的 status / error 里，
+        // 理由见 api::model_test 模块头）
+        .route("/api/models/test", post(api::model_test::run_model_test))
         // ── 自定义提供商（用户自建上游端点：存储 + 管理）──
         // 与 /api/models/manage 同级敏感：写配置（customProviders 键）且「新建」
         // 会顺带写账号库，挂 protected。账号侧不经这里 —— 客户端走

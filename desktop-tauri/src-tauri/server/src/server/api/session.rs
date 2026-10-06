@@ -629,21 +629,52 @@ fn catpaw_callback_page(status: u16, message: &str) -> Response {
 
 /// 从请求体里读 AutoClaw 地区（`provider` 字段，与 `POST /api/accounts` 同名）。
 ///
-/// 缺省与未知值都落**国内版**：与 provider id 的历史口径一致 ——
+/// 缺省（字段没带 / 空串）落**国内版**：与 provider id 的历史口径一致 ——
 /// 老客户端不带这个字段，而那些用户本来就在用国内版。
 /// 用 `Region::from_provider_id` 而不是自己 match 字符串：地区 ↔ id 的映射
 /// 只有 `autoclaw::region` 一份，这里再写一遍就会在加地区时静默漏掉。
+///
+/// ── 带值却不认识：明确拒绝（issue #93 的教训）──────────────────
+/// 原来是「未知值也落国内版」，代价是**跨 provider 的误投完全无声**：另一个家
+/// 的 id（如 Loomy）发到这条端点时，号码被发去 AutoClaw 的站点、账号也存成
+/// AutoClaw，而调用方拿到的是**成功响应** —— issue #93 正是这么发生的（浏览器
+/// 面板的桥接漏了 Loomy 分支，该走 Loomy 的请求落到了这里，全程零报错）。
+/// 因此只有「没带」才按历史口径回落；带了不认识的值就报出来。
+/// 判据与 [`oauth_vendor_of`] 一致：**不静默回落到某一个变体**。
 ///
 /// 读到国际版**不是**错误：这条链路的入口现在只服务国内版，但拒绝的判定在
 /// 核心层（`providers::autoclaw::login::ensure_sms_region`）—— 让那里返回一条
 /// 「该走哪条路」的人话错误，比在这里静默改成国内版好得多（静默改写的后果是
 /// 用户在国际版弹窗里填的号码被发到另一个站点去，排障时看不出异常）。
-fn autoclaw_region_of(payload: &Value) -> crate::server::core::providers::autoclaw::Region {
-    payload
+///
+/// 错误文案里的「支持哪两个值」从 `Region::ALL` 现算，不另写一份清单 —— 与上面
+/// 「映射只写一份」同一条理由：另写一份会在加地区时静默过期。
+fn autoclaw_region_of(
+    payload: &Value,
+) -> Result<crate::server::core::providers::autoclaw::Region, Response> {
+    use crate::server::core::providers::autoclaw::Region;
+    let raw = payload
         .get("provider")
         .and_then(Value::as_str)
-        .and_then(crate::server::core::providers::autoclaw::Region::from_provider_id)
-        .unwrap_or(crate::server::core::providers::autoclaw::Region::Cn)
+        .map(str::trim)
+        .unwrap_or("");
+    if raw.is_empty() {
+        return Ok(Region::Cn);
+    }
+    match Region::from_provider_id(raw) {
+        Some(region) => Ok(region),
+        None => {
+            let known = Region::ALL
+                .into_iter()
+                .map(Region::provider_id)
+                .collect::<Vec<_>>()
+                .join(" / ");
+            Err(management_error(
+                400,
+                format!("未知的登录地区「{raw}」（只支持 {known}）"),
+            ))
+        }
+    }
 }
 
 /// 发送短信验证码（**AutoClaw 国内版专用**，手机号验证码登录的第一步）。
@@ -666,13 +697,17 @@ fn autoclaw_region_of(payload: &Value) -> crate::server::core::providers::autocl
 /// ── 地区从哪来（`provider` 字段）────────────────────────────
 /// 两个地区的接口是**同一个路径、两个站点**，因此「发给哪一家」由请求带上来
 /// （前端把它要添加的那一家的 provider id 原样放进 `provider`，与
-/// `POST /api/accounts` 的字段同名同语义；缺省与未知值落国内版）。
+/// `POST /api/accounts` 的字段同名同语义；字段没带才落国内版，带了不认识的值
+/// 会被明确拒绝 —— 判据见 [`autoclaw_region_of`]，别家（如 Loomy）有自己的端点）。
 /// 但**只有国内版能走通**：国际版的手机验证码入口已从界面移除，带国际版进来
 /// 会在核心层被明确拒绝（理由见 `ensure_sms_region`）。
 pub async fn login_sms_send(body: Bytes) -> Response {
     let payload = parse_body(&body).unwrap_or(Value::Null);
     let phone = payload.get("phone").and_then(Value::as_str).unwrap_or("");
-    let region = autoclaw_region_of(&payload);
+    let region = match autoclaw_region_of(&payload) {
+        Ok(region) => region,
+        Err(response) => return response,
+    };
     match crate::server::core::providers::autoclaw::login::send_code(region, phone).await {
         Ok(result) => ok_json(result),
         Err(error) => management_error(error.status_code, error.message),
@@ -691,7 +726,10 @@ pub async fn login_sms_verify(State(state): State<ServerState>, body: Bytes) -> 
     let phone = payload.get("phone").and_then(Value::as_str).unwrap_or("");
     let code = payload.get("code").and_then(Value::as_str).unwrap_or("");
     let device_id = payload.get("deviceId").and_then(Value::as_str);
-    let region = autoclaw_region_of(&payload);
+    let region = match autoclaw_region_of(&payload) {
+        Ok(region) => region,
+        Err(response) => return response,
+    };
     let credentials = match crate::server::core::providers::autoclaw::login::login_with_code(
         region, phone, code, device_id,
     )
@@ -832,7 +870,10 @@ fn oauth_vendor_of(payload: &Value) -> Result<crate::server::core::providers::au
 /// `enabled: false`（国内版）不是错误：前端据此不渲染 OAuth 按钮。
 pub async fn login_oauth_captcha_config(body: Bytes) -> Response {
     let payload = parse_body(&body).unwrap_or(Value::Null);
-    let region = autoclaw_region_of(&payload);
+    let region = match autoclaw_region_of(&payload) {
+        Ok(region) => region,
+        Err(response) => return response,
+    };
     match crate::server::core::providers::autoclaw::oauth::captcha_config(region).await {
         Ok(config) => ok_json(config),
         Err(error) => management_error(error.status_code, error.message),
@@ -867,7 +908,10 @@ pub async fn login_oauth_captcha_config(body: Bytes) -> Response {
 /// 解析的 `localhost` 是它自己那台机器，占登记端口没有意义。
 pub async fn login_oauth_start(State(state): State<ServerState>, body: Bytes) -> Response {
     let payload = parse_body(&body).unwrap_or(Value::Null);
-    let region = autoclaw_region_of(&payload);
+    let region = match autoclaw_region_of(&payload) {
+        Ok(region) => region,
+        Err(response) => return response,
+    };
     let vendor = match oauth_vendor_of(&payload) {
         Ok(vendor) => vendor,
         Err(response) => return response,
