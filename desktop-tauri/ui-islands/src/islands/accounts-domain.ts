@@ -82,6 +82,13 @@ type ProviderFeatures = {
  */
 const PROVIDER_FEATURES: Record<string, ProviderFeatures> = {
   workbuddy: { usage: true, checkin: true, edition: true, identifier: 'uid', expiry: 'expiresAt' },
+  // WorkBuddy 国际版（拆家后的第二家，见 providers::workbuddy::region）：
+  //   · `checkin: false` 是事实 —— 腾讯的每日签到只有国内站有（拆家前靠
+  //     `edition !== 'intl'` 排除，现在由 provider 身份表达，那层排除随之多余）；
+  //   · `edition: false` 是因为注册名「WorkBuddy 国际版」自带地区，再拼一次会
+  //     得到「WorkBuddy 国际版 国际版」（`editionSuffix` 虽有「名字已含就不拼」
+  //     的兜底，这里直接写 false 更清楚，与 `zcode-intl` 同款）。
+  'workbuddy-intl': { usage: true, checkin: false, edition: false, identifier: 'uid', expiry: 'expiresAt' },
   raccoon: { usage: true, checkin: true, edition: false, identifier: 'userId', expiry: 'tokenExpiresAt' },
   catpaw: { usage: true, checkin: false, edition: false, identifier: 'uid', expiry: 'tokenExpiresAt' },
   // AutoClaw 两个地区能力完全一致，差别只在域名；两项都必须登记 —— 漏了哪一项，
@@ -184,7 +191,15 @@ export function providerSummaries(snapshot: AccountsSnapshot | null | undefined)
     if (known.has(id)) return
     known.set(id, { id, label: shared().wbProviders?.labelOf?.(id) || id, count })
   })
-  if (!known.size) known.set(DEFAULT_PROVIDER_ID, { id: DEFAULT_PROVIDER_ID, label: 'WorkBuddy', count: 0 })
+  // 摘要还没到时的兜底项：名字优先问注册表，问不到才用字面量 —— 与
+  // add-provider-pick 那张卡的兜底同一口径（拆家后注册名带「国内版」）
+  if (!known.size) {
+    known.set(DEFAULT_PROVIDER_ID, {
+      id: DEFAULT_PROVIDER_ID,
+      label: shared().wbProviders?.labelOf?.(DEFAULT_PROVIDER_ID) || 'WorkBuddy 国内版',
+      count: 0,
+    })
+  }
   return [...known.values()]
 }
 

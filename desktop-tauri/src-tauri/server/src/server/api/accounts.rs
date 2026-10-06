@@ -331,8 +331,9 @@ pub async fn dispatch(
 ///   ③ `AutoClaw` → AutoClaw 路径（W4b-T-c2）：`importDesktop === true` 导入
 ///      桌面端实时登录态（`%APPDATA%/AutoClaw/auth.json`，DPAPI 解密）；
 ///      否则手动添加（token/refreshToken + deviceId，`enc:` 密文自动解密）；
-///   ④ `WorkBuddy` 或**字段缺失** → 既有 workbuddy 路径（`store.add_account`
-///      不读 payload 里的 provider，见该函数的说明）。
+///   ④ `WorkBuddy` / `WorkBuddyIntl` 或**字段缺失** → 既有 workbuddy 路径
+///      （`store.add_account`，归属由这里的 provider id 给出：国际版与国内版
+///      共用同一套凭证形态与落账号路径，差别只在落进哪一家）。
 ///
 /// ── AutoClaw 曾经在这里显式 400（历史，别改回去）─────────────────
 /// W4a–W4b 之间它的凭证链路还没落地，那时这里对它的 payload 报 400：若让它落进
@@ -569,8 +570,16 @@ pub async fn add_account(state: &ServerState, body: &Bytes) -> Response {
             }
             store.add_trae_account(&credential, import_name, "manual")
         }
-        Some(crate::server::core::providers::ProviderKind::WorkBuddy) | None => {
-            store.add_account(&payload, None)
+        // WorkBuddy 系的两家（国内版 / 国际版）：同一套凭证形态与落账号路径，
+        // 差别只有归属 —— provider id 自己就是归属（拆家后不再从 payload 里的
+        // `edition` 反推：那是账号的属性，而落哪一家是身份问题）。
+        // `None`（老客户端不带 provider 字段）按国内版，历史契约不变。
+        Some(crate::server::core::providers::ProviderKind::WorkBuddy)
+        | Some(crate::server::core::providers::ProviderKind::WorkBuddyIntl)
+        | None => {
+            let provider = crate::server::core::providers::kind_from_id(provider)
+                .map(crate::server::core::providers::kind_id);
+            store.add_account(&payload, None, provider)
         }
     };
     match result {
@@ -857,6 +866,10 @@ pub async fn refresh_account(state: &ServerState, body: &Bytes) -> Response {
              然后在本页重新导入桌面端登录态（或重新粘贴新的登录凭证）",
         );
     }
+    // WorkBuddy 系（国内版 / 国际版）的兜底：两条链路都按**账号自己的**
+    // endpoint / prefixPath / platform / edition 续期
+    // （`AuthService::refresh_account_inner` 从记录里读，见那里的说明），
+    // 因此拆家后不必按地区分派 —— 国际版账号自然打国际站的 refresh 端点。
     match state.auth().refresh_account(&id).await {
         Ok(_) => ok_json(json!({
             "refreshedId": id,
