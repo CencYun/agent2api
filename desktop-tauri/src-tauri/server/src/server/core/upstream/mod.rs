@@ -76,6 +76,9 @@ use crate::server::logging;
 use self::connections::{ConnectionGuard, Connections};
 use self::sse::{ModelRewrite, ReasoningCoalescer};
 
+#[cfg(test)]
+mod capture_tests;
+
 /// 去重等待上限（对照 Node 的 INFLIGHT_WAIT_MS）
 const INFLIGHT_WAIT_MS: u64 = 45_000;
 
@@ -495,7 +498,10 @@ impl ForwardStream {
                 crate::server::config::timeout_settings().stream_idle_ms(),
             ),
         );
-        Self::from_translated(guarded, slot, connection, telemetry, model_rewrite)
+        let capture = telemetry.capture();
+        let mut stream = Self::from_translated(guarded, slot, connection, telemetry, model_rewrite);
+        stream.capture = capture;
+        stream
     }
 
     /// 翻译协议的构造入口：`inner` 已经是**标准 chat SSE** 帧流。
@@ -525,8 +531,6 @@ impl ForwardStream {
         // 于是本流的 `poll_next` 拿不到 `Ready(None)` —— 客户端收全帧后
         // 连接不关闭、一直等在那里（详见 `cancellable` 的说明）。
         let inner = cancellation::cancellable(inner, telemetry.cancel_token());
-        // 采集器在构造时取一次（见字段说明）
-        let capture = telemetry.capture();
         Self {
             inner,
             coalescer: ReasoningCoalescer::with_telemetry(telemetry.clone())
@@ -536,7 +540,8 @@ impl ForwardStream {
             _slot: slot,
             _connection: connection,
             telemetry,
-            capture,
+            // 原始字节已由翻译流采集，不能把生成的 chat 帧再次混入报文。
+            capture: None,
         }
     }
 }

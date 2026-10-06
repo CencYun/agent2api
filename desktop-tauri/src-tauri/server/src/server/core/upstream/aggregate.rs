@@ -63,10 +63,15 @@ pub async fn aggregate_sse_completion(
 ) -> Result<AggregatedCompletion, GatewayError> {
     // 与 `ForwardStream::new` 同款：reqwest 错误在这里就地描述成文案折进
     // io::Error（`describe_error_detail` 只认 reqwest::Error）
-    let stream = response.bytes_stream().map(|item| {
-        item.map_err(|error| {
+    let capture = telemetry.capture();
+    let stream = response.bytes_stream().map(move |item| {
+        let item = item.map_err(|error| {
             std::io::Error::other(crate::server::core::egress::describe_error_detail(&error))
-        })
+        });
+        if let (Ok(bytes), Some(capture)) = (&item, &capture) {
+            capture.push(bytes);
+        }
+        item
     });
     aggregate_frame_stream(Box::pin(stream), telemetry, model_rewrite).await
 }
@@ -78,6 +83,7 @@ pub async fn aggregate_sse_completion(
 /// [`aggregate_sse_completion`] 共用同一套聚合规则，只是输入从
 /// reqwest::Response 换成已翻译的帧流。telemetry / model_rewrite 的语义
 /// 与那个函数完全一致（见它的说明）。
+/// 原始报文由输入流在翻译前采集，本函数不重复采集内部 chat 帧。
 pub async fn aggregate_frame_stream(
     stream: futures::stream::BoxStream<'static, Result<bytes::Bytes, std::io::Error>>,
     telemetry: Arc<RequestTelemetry>,
@@ -149,11 +155,7 @@ async fn aggregate_frame_stream_inner(
             first_chunk_seen = true;
             telemetry.note_first_frame();
         }
-        // 调试模式：上游原始字节旁路给采集器（在解析之前 —— 采的是上游原样
-        // 吐出的 SSE 文本，不是我们解析 / 改写后的结果）
-        if let Some(capture) = telemetry.capture() {
-            capture.push(&chunk);
-        }
+        // 原始字节由输入侧（HTTP 字节流或协议翻译流）采集，聚合器只消费 chat 帧。
         buffer.push_str(&String::from_utf8_lossy(&chunk));
         // 逐行消费（只处理到最后一个 '\n' 之前的内容）
         while let Some(index) = buffer.find('\n') {
