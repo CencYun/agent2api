@@ -26,7 +26,8 @@ use serde_json::{json, Map, Value};
 
 use super::{
     content_parts, content_text, event_frame, freeform, is_truthy, json_text, native_tool,
-    random_id, string_field, string_value, tool_plan, SseLineBuffer, FIELD_ENCRYPTED_CONTENT,
+    random_id, string_field, string_value, tool_plan, SseLineBuffer, TOOL_IMAGE_PLACEHOLDER,
+    FIELD_ENCRYPTED_CONTENT,
 };
 use crate::server::logging;
 
@@ -532,9 +533,9 @@ fn push_input_item(
             messages.push(json!({
                 "role": "tool",
                 "tool_call_id": call_id_of(item),
-                // 只有图片时 `text` 是空串，占位文案理由见 [`IMAGE_ONLY_TEXT`]
+                // 只有图片时 `text` 是空串，占位文案理由见 [`TOOL_IMAGE_PLACEHOLDER`]
                 "content": if output.text.is_empty() {
-                    IMAGE_ONLY_TEXT.to_string()
+                    TOOL_IMAGE_PLACEHOLDER.to_string()
                 } else {
                     output.text
                 },
@@ -733,12 +734,6 @@ fn text_blocks_of(blocks: Option<&Value>) -> Option<String> {
         .join("\n");
     if text.is_empty() { None } else { Some(text) }
 }
-
-/// 只有图片、没有文本的工具结果，在 Chat 的 tool 消息里留的占位正文。
-///
-/// 不能让 content 空着：tool 消息的 content 是必填，空串在部分上游会被拒；
-/// 这句话同时告诉模型「图在紧接着的那条消息里」—— 否则它只看得到工具返回了空。
-const IMAGE_ONLY_TEXT: &str = "(the tool returned an image; it is attached in the following message)";
 
 /// 工具输出拆出来的两部分（见 [`tool_output_parts`]）
 pub(super) struct ToolOutput {
