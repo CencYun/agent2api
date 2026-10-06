@@ -293,6 +293,17 @@ const BRIDGE_JS: &str = r#"
     // 整表保存，见后端 handler 的说明）。`capabilities` 各键三态：不给 = 不改、
     // null = 恢复清单原值、给值 = 覆盖。
     setModelCapabilities: (provider, id, capabilities) => call('POST', '/api/models/capabilities', { provider, id, capabilities }),
+    // 模型测试：以这一行的上游模型发一次**真实**请求（走生产转发链路、
+    // 会消耗额度），候选被收窄到「这一家 × 指定的账号」，见后端
+    // `api::model_test` 的模块头。
+    //
+    // payload 里各键都可选（键名就是后端请求体的键）：`account_id` 缺省 =
+    // 全局优先级队列挑第一个；`prompt` / `system_prompt` / `reasoning` /
+    // `stream` 缺省 = 最小请求；`test_id` 由前端生成 —— 测试跑着的时候可以用既有的
+    // `terminateStatsRequest(id)` 把它掐掉（桌面壳的 invoke 没有 abort，
+    // 这是前端唯一能中止在途测试的手段，见后端那段说明）。
+    // 结论失败也返回 2xx：上游的错误在返回值的 status / error 里
+    testModel: payload => call('POST', '/api/models/test', payload || {}),
 
     // ── 网关 API Key（多把）──
     getKeys: () => call('GET', '/api/keys'),
@@ -374,9 +385,14 @@ const BRIDGE_JS: &str = r#"
     getAccountConnections: () => call('GET', '/api/accounts/connections'),
     checkinAllAccounts: id => call('POST', '/api/accounts/checkin', id ? { id } : {}),
 
-    // ── 手机验证码登录（AutoClaw **国内版**专用）──
+    // ── 手机验证码登录（AutoClaw 两地区 / Loomy）──
     // 与网页登录那条链（开窗口、等回调）不同：上游没有授权页，就是「发码 →
     // 用码换 token」两次同步调用，所以走管理 API 而不是 start_login。
+    //
+    // 与 `server/src/web_shim.rs` 的同名方法**必须成对维护**（那边是 headless
+    // 面板的桥接，同款约束见其 ZCode 那段的说明）：界面只认这两份桥，端点也
+    // 由它们各自选 —— 只改一边时另一形态会**静默走错家**，issue #93 就是漏改
+    // web_shim 那一半导致的（浏览器面板的 loomy 落进了 AutoClaw 端点）。
     //
     // 必须走 call 而不是让界面自己 invoke('api_request')：call 会经 invoke/asError
     // 把壳侧 `Err(String)` 归一成 Error —— 绕过它时 rejection 携带的是**裸字符串**，
@@ -387,10 +403,11 @@ const BRIDGE_JS: &str = r#"
     // 老界面传**裸手机号字符串**（历史契约），新界面传 `{phone, provider}`。
     // 两种都要收：界面与壳是两个独立产物，升级不同步时旧界面不能直接坏掉。
     //
-    // `provider` 是**哪一个地区**（`autoclaw` 国内版 / `autoclaw-intl` 国际版）：
-    // 两个地区的接口是同一套路径、两个站点，因此原样带上去 —— 国际版会在后端
-    // 被明确拒绝（它的手机验证码入口已移除，见 api::session::login_sms_send），
-    // 不带则按历史口径落国内版。省略即国内版（与老界面的行为一致）。
+    // `provider` 是**要添加的那一家**：在 AutoClaw 两个地区之间它是「哪一个
+    // 地区」（`autoclaw` 国内版 / `autoclaw-intl` 国际版）—— 两家的接口是同一套
+    // 路径、两个站点，因此原样带上去，国际版会在后端被明确拒绝（它的手机验证码
+    // 入口已移除，见 api::session::login_sms_send）；Loomy 则整条链路都不同，
+    // 由下面那行选端点。省略即国内版（与老界面的行为一致）。
     sendSmsCode: input => {
       const isObject = input && typeof input === 'object';
       const phone = String((isObject ? input.phone : input) || '');

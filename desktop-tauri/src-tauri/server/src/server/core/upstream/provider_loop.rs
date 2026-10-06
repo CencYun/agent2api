@@ -462,8 +462,14 @@ async fn attempt_queue(
         if ctx.telemetry.is_cancelled() {
             return Err(cancellation::cancelled_error());
         }
-        let target =
-            rotate::select_target_account(service, provider_ids, &cooldown_keys, &tried_ids).await?;
+        let target = rotate::select_target_account(
+            service,
+            provider_ids,
+            &cooldown_keys,
+            &tried_ids,
+            ctx.pinned_account,
+        )
+        .await?;
         // 连接计数改绑到这一轮选中的账号：失败重试换账号时计数跟着走，
         // 于是「一个请求任意时刻只占一个账号」这条口径不需要每个分支各维护一次
         // （429 降级、401 刷新后换号、会话式失败顺延三条路径都经过这里）。
@@ -526,6 +532,7 @@ async fn attempt_queue(
                         provider_ids,
                         &cooldown_keys,
                         &tried_ids,
+                        ctx.pinned_account,
                     ) {
                         Some(next) => {
                             // 换号额度用尽 → 队列里即使还有人也不再顺延
@@ -639,6 +646,7 @@ async fn attempt_queue(
                         provider_ids,
                         &cooldown_keys,
                         &tried_ids,
+                        ctx.pinned_account,
                     ) {
                         Some(next) => {
                             // 换号额度用尽 → 队列里即使还有人也不再顺延
@@ -1078,6 +1086,7 @@ async fn attempt_queue(
                                 provider_ids,
                                 &cooldown_keys,
                                 &tried_ids,
+                                ctx.pinned_account,
                             ) {
                                 Some(next) => {
                                     let next_label = account_display(&next);
@@ -1179,6 +1188,7 @@ async fn attempt_queue(
                         provider_ids,
                         &cooldown_keys,
                         &tried_ids,
+                        ctx.pinned_account,
                     ) {
                         Some(next) => {
                             if !take_switch(&mut switches_left, switch_total) {

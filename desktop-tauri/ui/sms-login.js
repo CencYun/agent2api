@@ -1,4 +1,4 @@
-/* Agent2API · 「手机验证码登录」交互引擎（当前只有 AutoClaw 国内版用）
+/* Agent2API · 「手机验证码登录」交互引擎（AutoClaw 国内版 / Loomy）
 
    与小浣熊 / Qoder 的网页登录（web-login.js）是**两套东西**，不要合并：
 
@@ -8,8 +8,10 @@
    上游形态决定了这个差别 —— AutoClaw 国内版没有授权页、没有授权码回调
    （理由见 src-tauri/src/server/core/providers/autoclaw/login.rs 的模块头），
    硬塞进网页登录引擎只会让那边多出一堆「这条路没有窗口也没有 state」的分支。
+   Loomy 同理（见 providers/loomy/login.rs 的模块头）。
    国际版的手机验证码入口已从添加账号弹窗移除（它只有 Zai / Google 网页登录），
-   因此这个引擎现在只服务国内版：手机号规则只有大陆那一种，没有地区分叉。
+   因此这个引擎服务的两家都在大陆号段内：规则仍按家给（Loomy 只收 `1[3-9]`，
+   见 create 里的 SMS_PROFILES），没有地区分叉。
 
    依赖 app.js 的顶层全局（经典 script 的顶层声明在全局可见）：$ / toast /
    __TAURI_INTERNALS__ 的 api_request。脚本顺序见 index.html：与 web-login.js
@@ -75,9 +77,18 @@
     /** 发码与登录共用一把锁：两个按钮都打上游，不能并点 */
     let busy = false;
 
-    const setHint = text => {
+    /**
+     * 写提示行。
+     *
+     * isError 决定这一行标不标红（样式是 css 的 .sms-hint.err）—— 失败提示此前
+     * 与成功提示长得一模一样，只差文案，扫一眼分不出来。真正的报错同时还会弹
+     * toast，这一笔只是让原地那条也读得出来，不改任何链路行为。
+     */
+    const setHint = (text, isError = false) => {
       const node = hint();
-      if (node) node.textContent = text;
+      if (!node) return;
+      node.textContent = text;
+      node.classList.toggle('err', isError && Boolean(text));
     };
 
     /**
@@ -228,7 +239,7 @@
         startCooldown();
       } catch (error) {
         const reason = describeError(error);
-        setHint(`发送失败：${reason}`);
+        setHint(`发送失败：${reason}`, true);
         window.wbApp.toast(`发送失败：${reason}`, 'err');
         // ── 为什么失败也要倒计时 ───────────────────────────────────
         // 「过于频繁」（上游码 630101）正是最该冷却的一种失败：不打冷却的话
@@ -267,7 +278,7 @@
         await config.onSuccess?.(data);
       } catch (error) {
         const reason = describeError(error);
-        setHint(`登录失败：${reason}`);
+        setHint(`登录失败：${reason}`, true);
         window.wbApp.toast(`登录失败：${reason}`, 'err');
       } finally {
         busy = false;

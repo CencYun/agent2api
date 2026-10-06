@@ -62,6 +62,9 @@ pub mod import_sources;
 pub mod keys_api;
 pub mod logs_api;
 pub mod model_manage;
+// 模型测试（模型管理页操作列的「测试」）：挂管理面、走真实转发链路，
+// 只把候选收窄到「这一家 × 这一个账号」并把流量标成测试，见该文件模块头
+pub mod model_test;
 pub mod models;
 pub mod panel;
 pub mod pipeline;
