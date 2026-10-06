@@ -22,7 +22,7 @@ use serde_json::{Map, Value};
 
 use crate::server::core::account_store::priority::next_free_priority;
 use crate::server::core::account_store::sql;
-use crate::server::core::account_store::state::StoredAccount;
+use crate::server::core::account_store::state::{mark_name_custom, StoredAccount};
 use crate::server::core::account_store::{AccountStore, AccountStoreError, LOOMY_PROVIDER_ID};
 use crate::server::logging;
 
@@ -200,6 +200,12 @@ impl AccountStore {
         record.insert("id".to_string(), Value::String(id.clone()));
         record.insert("provider".to_string(), Value::String(LOOMY_PROVIDER_ID.to_string()));
         record.insert("name".to_string(), Value::String(record_name.clone()));
+        // 备注名标记：用户显式传了名或既有记录已打标时置位，界面据此决定
+        // 「备注名赢过昵称等默认口径」还是「维持原展示行为」。与其余八家同一
+        // 口径（见 `state::mark_name_custom`）—— 本家走自己的保存路径（不经过
+        // `store_crud::upsert_account` 的统一打标），所以必须在这里显式调用，
+        // 漏了会让添加时填的备注名在将来被昵称顶掉。
+        mark_name_custom(&mut record, name.is_some_and(|value| !value.trim().is_empty()), existing.as_ref());
         if !user_id.is_empty() {
             record.insert("userId".to_string(), Value::String(user_id));
         }
