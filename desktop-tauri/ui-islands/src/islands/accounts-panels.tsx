@@ -45,8 +45,8 @@ import { formatTime, poolItemLabel, POOL_VALUE_PREFIX, shared, type AccountRecor
 import {
   accountTags, activeLimits, checkedInToday, checkinDoneTitle, claimDoneTitle, claimedToday,
   displayNameOf, editionSuffix, expiryMillis, formatResetText, identifierOf, isDesktopAccount, isEnabled,
-  providerFeatures, providerOf, RESET_UNKNOWN, supportsCheckin, supportsClaim, supportsUsage,
-  supportsWelfare, welfareDoneTitle, welfareStateOf, welfareTodoTitle,
+  lowBalanceBlockedOf, lowBalanceOf, providerFeatures, providerOf, RESET_UNKNOWN, supportsCheckin,
+  supportsClaim, supportsUsage, supportsWelfare, welfareDoneTitle, welfareStateOf, welfareTodoTitle,
 } from './accounts-domain'
 import { PRIORITY_MAX, PRIORITY_MIN, priorityOf } from './accounts-columns'
 import {
@@ -424,11 +424,26 @@ export function UsageCell({ account }: { account: AccountRecord }) {
   // 的失败结论，理由与后端快照出口一致
   const entry = usageEntryOf(account)
   const summary = usageSummary(entry)
+  // 「余额不足已跳过」徽章：与后端选路过滤同一判据（lowBalanceBlockedOf），
+  // 让「为什么这个账号不接请求」在界面上有处可看。禁用档不标 —— 那一档
+  // 状态列的「已禁用」开关就是答案；跳过档账号仍是启用的，不标就看不出。
+  const blocked = lowBalanceBlockedOf(account, entry)
   // 失败 / 未配置那些档不画进度条：读数本身就不是「还剩多少」，
   // 给它配个进度条会把一句错误装饰成一条可信的读数
   const pool = summary.kind === 'ok' || summary.kind === 'warn' ? usagePool(entry) : null
+  const blockedBadge = blocked ? (
+    <Badge variant='warning' shape='tag'
+      title={`余额低于阈值 ${lowBalanceOf(account).threshold}，转发时会跳过该账号（余额回升自动恢复）`}>
+      余额不足 · 已跳过
+    </Badge>
+  ) : null
   if (!pool) {
-    return <span className={`usage-sum ${summary.kind}`} title={summary.title}>{summary.text}</span>
+    return (
+      <span className='usage-sum-wrap'>
+        <span className={`usage-sum ${summary.kind}`} title={summary.title}>{summary.text}</span>
+        {blockedBadge}
+      </span>
+    )
   }
   return (
     <span className='usage-pool' title={summary.title}>
@@ -437,6 +452,7 @@ export function UsageCell({ account }: { account: AccountRecord }) {
         {pool.percent !== null ? <Progress value={pool.percent} className='usage-pool-bar' /> : null}
         <span className={`usage-pool-view ${summary.kind}`}>{pool.text}</span>
       </span>
+      {blockedBadge}
     </span>
   )
 }

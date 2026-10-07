@@ -130,7 +130,7 @@ pub async fn accounts_entry(State(state): State<ServerState>, request: axum::ext
     let full_path = request.uri().path().to_string();
     // 原始查询串（未解码的原文，由用到它的分支自行 `query_param` 解码）。
     // 目前只有 `GET /api/accounts/usage?id=<id>` 用它 —— 那一支是「用户手点某一行
-    // 的积分按钮」，与批量的区别见 `core::usage_query::query_all` 的说明。
+    // 的余额按钮」，与批量的区别见 `core::usage_query::query_all` 的说明。
     let query = request.uri().query().unwrap_or("").to_string();
     let body = match axum::body::to_bytes(request.into_body(), crate::server::http::MAX_BODY_SIZE)
         .await
@@ -936,7 +936,7 @@ pub async fn refresh_expiring_accounts(state: &ServerState) -> Response {
 
 /// ── 两条路径的目标解析都不在本文件了 ─────────────────────
 /// · 余额查询的目标集合：`core::usage_query::resolve_batch_targets`
-///   （它跟着查询逻辑一起下沉 —— 「定时查询积分」要用同一份口径）；
+///   （它跟着查询逻辑一起下沉 —— 每账号自动查询与手动批量共用同一份口径）；
 /// · 签到的目标集合：`core::billing::checkin::resolve_checkin_targets`
 ///   （定时签到与手动签到必须共用同一段逻辑）。
 /// 本文件只剩 `accounts_checkin` 一个转发壳。

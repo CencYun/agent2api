@@ -872,7 +872,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // 它**不是**更新检查那种「有新版本就提示」的可选动作 —— 没升级时账号是空的，
   // 所以过程与结果都要 toast 报出来，不能让用户面对一个「账号怎么空了」的疑问。
   void window.wbUpgradePanel?.check?.();
-  // 启动即读一次「定时查询积分」的结果快照：快照在后端是**持久化**的（重启也在），
+  // 启动即读一次后端的余额结果快照（每账号自动查询的最新结论，重启也在），
   // 只靠下面那条 20 秒轮询的话，用户启动后第一眼看到的是账号页一片「未查询」，
   // 要等最久一整轮才变出余额 —— 那正是「定时查询好像没生效、必须手动点」的来源。
   // 放在 DOMContentLoaded：islands（wbAccountsView 的注册处，见 index.html 的
@@ -901,7 +901,7 @@ setInterval(() => {
   void syncLogsBadge();
   // 请求日志的未读失败同理：人不在请求日志页时也要有人推进角标
   void syncRequestsBadge();
-  // 「定时查询积分」的结果快照也跟着这一轮读一次：后端的定时任务在跑，
+  // 余额快照也跟着这一轮读一次：后端的每账号自动查询在跑，
   // 界面得跟上它（否则用户不点按钮就永远停在启动那次的旧余额上）。
   // 快照时间戳没变时它自己会早退，不会造成无谓的重绘。
   void window.wbAccountsView?.syncBalancesSnapshot?.();

@@ -88,6 +88,18 @@ export type AccountRecord = {
   noAuth?: boolean
   maxConcurrent?: number
   checkinAt?: number
+  /**
+   * 每账号自动余额查询设置（后端公开形态恒为对象；**缺省 = 开启、1 分钟**，
+   * 显式 `{enabled:false}` 才是关；见 accounts-domain 的 `usageQueryOf`）。
+   * `interval` 单位是秒（30 ~ 86400）。
+   */
+  usageQuery?: { enabled?: boolean; interval?: number }
+  /**
+   * 余额不足时的处理（后端公开形态恒为对象；**缺省 = 跳过、阈值 1**，显式
+   * `off` 才是关；见 `lowBalanceOf`）。`threshold` 与余额列同一数字口径
+   * （`available` / workbuddy 家的 `totalLeft`）。
+   */
+  lowBalance?: { mode?: 'off' | 'skip' | 'disable'; threshold?: number }
   addedAt?: number
   updatedAt?: number
   tokenTail?: string

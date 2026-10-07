@@ -21,7 +21,7 @@
  * 所以筛选与计数都按这一条队列算，positionMap 的序号就是整张表的行序。
  */
 
-import { shared, formatTime, type AccountRecord, type AccountsSnapshot, type RateLimitInfo } from './accounts-shared'
+import { shared, formatTime, type AccountRecord, type AccountsSnapshot, type RateLimitInfo, type UsageEntry } from './accounts-shared'
 
 /** 缺省 provider id（后端注册表的默认项；旧账号记录没有该字段时的兜底） */
 export const DEFAULT_PROVIDER_ID = 'workbuddy'
@@ -247,6 +247,96 @@ export function tokenExpiryOf(account: AccountRecord | null | undefined): number
 /** 该账号所属 provider 是否有余额概念（没有就不渲染余额按钮，也不参与批量查询） */
 export function supportsUsage(account: AccountRecord | null | undefined): boolean {
   return providerFeatures(providerOf(account)).usage
+}
+
+/* ─── 每账号的余额查询设置（账号设置弹窗「查询设置」段 + 余额列徽章共用）─── */
+
+/** 自动查询间隔的边界（秒）—— 与后端 `usage_records` 的常量同一对数值 */
+export const USAGE_QUERY_MIN_SECONDS = 30
+export const USAGE_QUERY_MAX_SECONDS = 86_400
+
+/** 余额不足的处理档（与后端 `lowBalance.mode` 同一套取值） */
+export type LowBalanceMode = 'off' | 'skip' | 'disable'
+
+/**
+ * 缺省口径（记录上没有 usageQuery / lowBalance 字段时）—— 与后端
+ * `usage_records::DEFAULT_*` 同一对数值：自动查询**开启**、1 分钟；余额不足
+ * **跳过**、阈值 1。缺省必须对齐全局任务时代「默认就在查」的行为，否则升级
+ * 后所有人的余额列会静默停更；跳过@1 是最温和的兜底（没钱的让路、回升自愈）。
+ */
+export const DEFAULT_USAGE_INTERVAL_SECONDS = 60
+export const DEFAULT_LOW_BALANCE_THRESHOLD = 1
+
+/**
+ * 自动余额查询设置的规范化读取。缺省（字段缺失）= 开启、1 分钟；显式
+ * `{enabled:false}` 才是关；开着但间隔缺失 / 越界按缺省间隔跑（脏值不把
+ * 自动查询停掉）。调用方拿到的一定是完整形状，不必判「键缺失」。
+ */
+export function usageQueryOf(account: AccountRecord | null | undefined): {
+  enabled: boolean
+  interval: number
+} {
+  const config = account?.usageQuery
+  if (!config || typeof config !== 'object') {
+    return { enabled: true, interval: DEFAULT_USAGE_INTERVAL_SECONDS }
+  }
+  const enabled = config.enabled === undefined ? true : config.enabled === true
+  const interval = Number(config.interval) || 0
+  const valid = interval >= USAGE_QUERY_MIN_SECONDS && interval <= USAGE_QUERY_MAX_SECONDS
+  return { enabled, interval: enabled && !valid ? DEFAULT_USAGE_INTERVAL_SECONDS : interval }
+}
+
+/**
+ * 余额不足处理的规范化读取。缺省（字段缺失）= 跳过、阈值 1；显式 `off` 必须
+ * 保持 off（那是用户关掉的）；skip / disable 档下阈值缺失或非法回落缺省 1。
+ */
+export function lowBalanceOf(account: AccountRecord | null | undefined): {
+  mode: LowBalanceMode
+  threshold: number
+} {
+  const config = account?.lowBalance
+  if (!config || typeof config !== 'object') {
+    return { mode: 'skip', threshold: DEFAULT_LOW_BALANCE_THRESHOLD }
+  }
+  const mode: LowBalanceMode =
+    config.mode === 'skip' || config.mode === 'disable' || config.mode === 'off'
+      ? config.mode
+      : 'skip'
+  const threshold = Number(config.threshold) || 0
+  if (mode === 'off') return { mode, threshold: 0 }
+  return { mode, threshold: threshold > 0 ? threshold : DEFAULT_LOW_BALANCE_THRESHOLD }
+}
+
+/**
+ * 秒数 → 人能读的间隔文案（`每 90 分钟` 这类），与后端变更提示同一口径：
+ * 整小时 / 整分钟进位，其余按秒。
+ */
+export function formatIntervalSeconds(seconds: number): string {
+  if (seconds > 0 && seconds % 3600 === 0) return `${seconds / 3600} 小时`
+  if (seconds > 0 && seconds % 60 === 0) return `${seconds / 60} 分钟`
+  return `${seconds} 秒`
+}
+
+/**
+ * 这条账号此刻是否应因「余额不足」被跳过（余额列徽章的判据）。
+ *
+ * 与后端选路过滤（`usage_records::balance_blocked`）同一口径：mode == 'skip'
+ * 且最近一次读数判得出数字且严格小于阈值（等于仍可用）。`entry` 是余额缓存的
+ * 读数（`usageEntryOf` 的结果）—— 判不出（未查询 / 失败行 / unlimited / 数字
+ * 缺失）一律放行：跳过是对「这个账号没钱」的断言，拿不出证据就不亮徽章。
+ */
+export function lowBalanceBlockedOf(
+  account: AccountRecord | null | undefined,
+  entry: UsageEntry,
+): boolean {
+  const { mode, threshold } = lowBalanceOf(account)
+  if (mode !== 'skip' || !(threshold > 0)) return false
+  if (!entry || typeof entry !== 'object') return false
+  const data = entry as Record<string, unknown>
+  if (data.unlimited) return false
+  // 数字口径与余额列同源：workbuddy 既有形状 totalLeft，其余 available
+  const remaining = Number(data.totalLeft ?? data.available)
+  return Number.isFinite(remaining) && remaining < threshold
 }
 
 /** 是否为「桌面端实时登录态」账号（凭证实时读客户端文件；可禁用、也可删除） */

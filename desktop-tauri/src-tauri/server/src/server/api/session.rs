@@ -132,10 +132,20 @@ fn routed_account_id(accounts: &Value, model: Option<&str>, counts: &HashMap<Str
     // 候选链是 id 空间（内置家 + 自定义家同列，见 `router` 的模块头）；
     // 自定义家的账号同样在全局队列里，`pick_for_model` 按 provider 字符串
     // 过滤候选，两种 id 天然可比。
-    let candidates = router::route_for_forward(model);
-    let providers: Vec<&str> = candidates.iter().map(String::as_str).collect();
+    let provider_chain = router::route_for_forward(model);
+    let providers: Vec<&str> = provider_chain.iter().map(String::as_str).collect();
+    // 余额不足软跳过的账号先剔除（与转发选路同一判据，见
+    // `upstream::rotate::filter_balance_blocked`）：★ 标的是「下一个请求会先用
+    // 谁」，被余额挡住的账号不该标 ★ —— 否则两边说的又不是一件事了。
+    let facts = crate::server::core::usage_records::balance_facts();
+    let candidate_accounts: Vec<Value> = routing::accounts_of(accounts)
+        .into_iter()
+        .filter(|account| {
+            !crate::server::core::usage_records::balance_blocked(account, &facts)
+        })
+        .collect();
     routing::pick_for_model(
-        &routing::accounts_of(accounts),
+        &candidate_accounts,
         model,
         &providers,
         counts,

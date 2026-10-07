@@ -2,8 +2,6 @@ import * as React from 'react'
 import { createRoot } from 'react-dom/client'
 import { Badge, Button, Checkbox, Input, Switch } from '@ui'
 // 「把检查结果交给更新弹窗」与 app.js 的轮询同一条出口，实现在更新家族的共享模块里
-// （它自带那一族的桥类型与弹窗判定，见 update-shared.ts 的 forwardUpdateResult）
-import { forwardUpdateResult } from './update-shared'
 
 /**
  * 定时任务面板（间隔型任务 + 自动签到）—— 本项目的第一个**面板岛**。
@@ -31,9 +29,12 @@ import { forwardUpdateResult } from './update-shared'
  * 开关 → Switch、复选框 → Checkbox、数字 / 时刻输入 → Input。
  *
  * ── 这一页管两类任务（接口也是两组）──────────────────────────
- *   · **间隔型**（凭证自动维护 / 定时查询积分 / 模型目录刷新 / 软件版本检查 /
+ *   · **间隔型**（凭证自动维护 / 模型目录刷新 /
  *     日志页自动刷新 / 请求日志自动刷新 / 报表自动刷新）
  *     —— 形状统一：`{enabled, interval}`，走 /api/scheduled-tasks。
+ *     「软件版本检查」也是间隔型、也走同一组接口，但它的配置入口收进了
+ *     「更新设置」弹窗（update-settings.tsx）—— 那一行在本页过滤掉（见
+ *     HIDDEN_TASK_IDS），后端的定时执行不受影响。
  *   · **自动签到** —— 每天定点型：`{enabled, time, providers}` 外加当天去重与
  *     启动补签，走 /api/auto-checkin。两者形状不同，所以后端也是两组接口（理由见
  *     core::scheduled_tasks 与 api::scheduled_tasks 的模块头）；界面上收在同一页，
@@ -178,12 +179,20 @@ function shared(): SharedWindow {
 const CHECKIN_ID = 'autoCheckin'
 
 /**
- * 「软件版本检查」的任务 id（后端 `config::KEY_UPDATE_CHECK`）。
+ * 本页**不渲染**的任务 id：软件版本检查（后端 `config::KEY_UPDATE_CHECK`）。
  *
- * 单独起一个常量是因为这一条在 runTask 里有个**额外动作**：查到新版本要把结果转给
- * 更新面板弹窗（见 forwardUpdateResult），不是跑完报一句就完事。
+ * 任务本身还在后端注册表里照常跑（到期自动查 GitHub、状态与冷却照旧落库），
+ * 只是开关与间隔的配置入口收进了「软件更新」面板的「更新设置」弹窗 ——
+ * 和版本相关的设置收在一个地方。本页在 load 与 sync 两个数据入口统一过滤，
+ * 卡片、计数、徽标因此都不看它。
  */
-const UPDATE_CHECK_ID = 'updateCheck'
+const HIDDEN_TASK_IDS: ReadonlySet<string> = new Set(['updateCheck'])
+
+/** 数据入口统一过滤：本页不渲染的任务不进状态（卡片 / 计数 / 徽标因此都不看它） */
+function filterVisibleTasks(list: { tasks?: IntervalTask[] } | null | undefined): IntervalTask[] {
+  const tasks = Array.isArray(list?.tasks) ? list.tasks : []
+  return tasks.filter(task => !HIDDEN_TASK_IDS.has(task.id))
+}
 
 /**
  * 自动签到的说明文案（问号 tooltip 的内容）。
@@ -205,7 +214,7 @@ const SYNC_MS = 20_000
 
 /**
  * 整行铺开的卡片条数：自动签到 + 凭证自动维护。
- * 其余卡片裹进 `.task-grid` 两栏三行（列优先，见 page-tasks.css 的说明）。
+ * 其余卡片裹进 `.task-grid` 两栏（行优先逐行配对，见 page-tasks.css 的说明）。
  */
 const LEAD_CARDS = 2
 
@@ -445,7 +454,7 @@ function TasksPanel() {
           return null
         }),
       ])
-      setTasks(Array.isArray(list?.tasks) ? list.tasks : [])
+      setTasks(filterVisibleTasks(list))
       setCheckin(checkinState)
       setLoaded(true)
     } catch (error) {
@@ -472,7 +481,7 @@ function TasksPanel() {
         api.getScheduledTasks(),
         api.getAutoCheckin().catch(() => null),
       ])
-      setTasks(Array.isArray(list?.tasks) ? list.tasks : [])
+      setTasks(filterVisibleTasks(list))
       setCheckin(checkinState)
     } catch (error) {
       console.warn('同步定时任务状态失败:', errorMessage(error))
@@ -572,13 +581,6 @@ function TasksPanel() {
       toast(`✅ ${task.label}：${result?.summary || '已执行'}`)
       // 凭证刷新会改账号页的有效期 / 凭证状态，顺手刷新主界面
       if (task.id === 'credentialMaintenance') await shared().wbApp?.refresh?.()
-      // 立即查询积分刚写下一份新快照，让账号页马上应用它 —— 否则用户点完
-      // 「立即执行」切到账号页，看到的还是上一次的旧余额
-      if (task.id === 'usageQuery') await shared().wbAccountsView?.syncBalancesSnapshot?.()
-      // 软件版本检查：查到新版本就弹出「检测到更新」弹窗（与设置页「检查更新」、定时
-      // 任务到期后轮询到结果时同一个弹窗）。放在最后：它只影响别处的展示，跑完本页的
-      // 状态更新与刷新都完成了再播报，用户先看到本页的结果
-      if (task.id === UPDATE_CHECK_ID) await forwardUpdateResult()
     } catch (error) {
       toast(`执行失败：${errorMessage(error)}`, 'err')
       await loadPanel()
@@ -871,7 +873,7 @@ function TasksPanel() {
   const badgeTone = badgeVariant === 'destructive' ? 'bad' : badgeVariant === 'success' ? 'ok' : ''
 
   // 卡片顺序：自动签到在最前（用户最关心的那条），其余按后端给的顺序。
-  // 后六条裹进 .task-grid 分两栏（列优先），条数变了只是分栏比例变，不会错位。
+  // 其余条裹进 .task-grid 分两栏（行优先逐行配对），条数变了只是行数变，不会错位。
   const cards = [checkinCard(), ...tasks.map(task => taskCard(task))]
   const rest = cards.slice(LEAD_CARDS)
 
