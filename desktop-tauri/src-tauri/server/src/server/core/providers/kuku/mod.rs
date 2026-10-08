@@ -32,6 +32,12 @@
 //! （zhengwuji-workbuddy 2026-10-01 实测；该接口**不认 `app_id`**，query 只带
 //! `channel/clienttype/version`，桌面客户端形态 `401/1.6.7`）。
 //!
+//! ── 签到 ──────────────────────────────────────────────────
+//! 「免费领积分」活动的每日任务领取（`freepoint/homenew` 面板 +
+//! `freepoint/taskComplete`，任务 `LOGIN` / `CHAT`），已接进
+//! `core::auto_checkin`（清单里列 `kuku`），claim 见 `kuku::checkin`。
+//! 业务会话前提（换发 genflowpro STOKEN）见 `engine.rs`。
+//!
 //! ── 刷新 / 登录形态 ────────────────────────────────────────
 //! 与 CatPaw 同一处境：BDUSS 是百度通行证登录态 Cookie，**没有刷新接口**
 //! （`supports_refresh = false`），过期只能重新登录 / 重新导入。添加路径两条：
@@ -43,6 +49,7 @@
 
 pub mod adapter;
 pub mod balance;
+pub mod checkin;
 pub mod chat;
 pub mod credentials;
 pub mod engine;

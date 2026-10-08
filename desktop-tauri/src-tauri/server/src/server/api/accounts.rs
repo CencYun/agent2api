@@ -298,6 +298,25 @@ pub async fn dispatch(
                 return super::zcode_claim::claim_plan(&state, &id, body).await;
             }
         }
+        // Loomy 新手任务一键领取：把该账号全部未完成的 key 串行上报（幂等，
+        // 重复点不会重复加分；执行体见 `core::providers::loomy::onboarding`）。
+        if let Some(id) = rest.strip_suffix("/onboarding/claim") {
+            let id = decode_segment(id);
+            if !id.is_empty() {
+                return super::onboarding::claim(&state, &id).await;
+            }
+        }
+    }
+
+    // ③' GET + /onboarding 结尾 → Loomy 新手任务状态（只读，签到后弹窗的查询口）。
+    // 与上面 POST 段同一写法：后缀互不包含，先后不影响命中。
+    if method == Method::GET {
+        if let Some(id) = rest.strip_suffix("/onboarding") {
+            let id = decode_segment(id);
+            if !id.is_empty() {
+                return super::onboarding::status(&state, &id).await;
+            }
+        }
     }
 
     // ④ PATCH / DELETE → 把剩余段当账号 id。

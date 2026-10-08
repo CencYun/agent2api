@@ -341,6 +341,11 @@ pub enum ProviderKind {
     /// 与 CatPaw 同一处境）；模型是 `/wenchain/genflowpro/model_list` 的
     /// `model_name`（静态兜底 + 远程刷新）；余额是
     /// `/bizapi/gfpro/getgfvipremain`（`data.list[0].totalPoint`）。
+    ///
+    /// ── 签到形态 ────────────────────────────────────────────
+    /// 「免费领积分」活动的每日任务（每日登录 / 完成一次对话），已接进
+    /// `core::auto_checkin`（清单里列 `kuku`），claim 见 `kuku::checkin`。
+    /// 业务会话靠换发的 genflowpro STOKEN（`kuku::engine`）。
     Kuku,
 }
 

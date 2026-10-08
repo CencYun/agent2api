@@ -64,12 +64,16 @@ pub const DEFAULT_TIME: &str = "00:01";
 ///     触发刷新（`POST /api/v1/points/first-login`，见 `providers::loomy::checkin`）。
 ///     自动签到对它就是每天替账号打一次这个接口，长期不登录的账号也能把
 ///     赠送积分续上。
+///   - **KukuAI**：「免费领积分」活动的每日任务（每日登录 / 完成一次对话，
+///     `freepoint/taskComplete`，见 `providers::kuku::checkin`）。接口幂等，
+///     重复领取只返回 reward_point=0；业务会话由换发的 genflowpro STOKEN
+///     保障（`kuku::engine`）。
 ///
 /// 这是「有签到活动」的清单，不是「有积分概念」的清单：CatPaw 有积分查询但
 /// 没有签到，因此不在此列 —— 它的账号在批量签到里被算作 `skipped`。
 /// 加一家之前先确认它的签到链路真的存在（一个点了必然报错的复选框比没有更糟）。
-pub const CHECKIN_PROVIDERS: [&str; 6] =
-    ["workbuddy", "raccoon", "autoclaw", "autoclaw-intl", "qoder", "loomy"];
+pub const CHECKIN_PROVIDERS: [&str; 7] =
+    ["workbuddy", "raccoon", "autoclaw", "autoclaw-intl", "qoder", "loomy", "kuku"];
 
 /// 缺省的签到提供商集合（全选）
 pub fn default_providers() -> Vec<String> {

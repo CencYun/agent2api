@@ -388,6 +388,14 @@ const BRIDGE_JS: &str = r#"
     // 账号页「连接数」列 2 秒轮询它 —— 后端是进程内计数，这条请求很轻。
     getAccountConnections: () => call('GET', '/api/accounts/connections'),
     checkinAllAccounts: id => call('POST', '/api/accounts/checkin', id ? { id } : {}),
+    // ── Loomy 新手任务（查询 / 一键领取）──
+    // 签到完成后的配套动作：界面查询该账号的任务状态，有未领取的弹窗展示并领取
+    // （见 ui-islands 的 accounts-dialog-onboarding）。与 `server/src/web_shim.rs`
+    // 的同名方法成对维护（headless 面板同一份界面，缺一边会在那一形态下静默失效）。
+    getOnboardingTasks: id =>
+      call('GET', '/api/accounts/' + encodeURIComponent(String(id || '')) + '/onboarding'),
+    claimOnboardingTasks: id =>
+      call('POST', '/api/accounts/' + encodeURIComponent(String(id || '')) + '/onboarding/claim', {}),
 
     // ── 手机验证码登录（AutoClaw 两地区 / Loomy）──
     // 与网页登录那条链（开窗口、等回调）不同：上游没有授权页，就是「发码 →

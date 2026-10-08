@@ -759,6 +759,15 @@ pub fn shim_js() -> &'static str {
     getBalancesSnapshot: function () { return call('GET', '/api/accounts/usage/snapshot'); },
     getAccountConnections: function () { return call('GET', '/api/accounts/connections'); },
     checkinAllAccounts: function (id) { return call('POST', '/api/accounts/checkin', id ? { id: id } : {}); },
+    // ── Loomy 新手任务（查询 / 一键领取）──
+    // 与桌面 `bridge.rs` 的同名方法成对维护：签到后界面查询任务状态、有未领取才
+    // 弹窗领取（accounts-dialog-onboarding）。
+    getOnboardingTasks: function (id) {
+      return call('GET', '/api/accounts/' + encodeURIComponent(String(id || '')) + '/onboarding');
+    },
+    claimOnboardingTasks: function (id) {
+      return call('POST', '/api/accounts/' + encodeURIComponent(String(id || '')) + '/onboarding/claim', {});
+    },
 
     // ── 手机验证码登录（AutoClaw 国内版 / Loomy）──
     // 与桌面 `bridge.rs` 的同名方法**必须成对存在**（理由见下面 ZCode 那段的

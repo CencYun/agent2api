@@ -351,6 +351,30 @@ pub(crate) fn ptoken_of(extras: &[(String, String)]) -> Option<String> {
     pick("PTOKEN").or_else(|| pick("PTOKEN_BFESS"))
 }
 
+/// 尽力把凭证的 STOKEN 换成「genflowpro 作用域」的新令牌（见 `engine.rs`）。
+///
+/// 有 PTOKEN 且换发成功才替换，否则原样克隆返回（失败只记日志，不阻断）。
+/// 签到这类**直接打业务接口**、不经过 `session::ensure_tokens` -6 自愈路径
+/// 的场景用它保障会话可用；每次换发就是一次 passport POST，签到一天一次
+/// 的频率没有风控顾虑。
+pub async fn with_business_stoken(credentials: &KukuCredentials) -> KukuCredentials {
+    let mut prepared = credentials.clone();
+    if let Some(ptoken) = ptoken_of(&prepared.extras) {
+        match super::engine::exchange_genflowpro_stoken(&prepared.bduss, &ptoken).await {
+            Ok(stoken) => {
+                prepared.stoken = stoken;
+            }
+            Err(error) => {
+                crate::server::logging::log(
+                    "[KukuAI]",
+                    &format!("⚠️ 换发业务会话令牌失败（{}），按原凭证继续", error.message),
+                );
+            }
+        }
+    }
+    prepared
+}
+
 /// 把「本机或手动解析出来的凭证」补上账号身份（uid / nickname），供账号层落盘。
 ///
 /// ── 换发业务会话令牌（2026-10-08 实测后加，见 `engine.rs` 模块头）────
@@ -369,20 +393,7 @@ pub async fn enrich_identity(
     proxy: Option<&crate::server::core::proxies::ResolvedProxy>,
     force: bool,
 ) -> Result<KukuCredentials, GatewayError> {
-    let mut prepared = credentials.clone();
-    if let Some(ptoken) = ptoken_of(&prepared.extras) {
-        match super::engine::exchange_genflowpro_stoken(&prepared.bduss, &ptoken).await {
-            Ok(stoken) => {
-                prepared.stoken = stoken;
-            }
-            Err(error) => {
-                crate::server::logging::log(
-                    "[KukuAI]",
-                    &format!("⚠️ 换发业务会话令牌失败（{}），按原凭证继续", error.message),
-                );
-            }
-        }
-    }
+    let prepared = with_business_stoken(credentials).await;
     let triple = super::session::ensure_tokens(&prepared, proxy, force).await?;
     let mut enriched = prepared;
     if !triple.uk.is_empty() {

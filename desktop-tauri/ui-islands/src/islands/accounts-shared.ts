@@ -130,6 +130,34 @@ export type Align = 'left' | 'center' | 'right'
  */
 export type PanelKind = 'limits'
 
+/* ─── Loomy 新手任务（签到后弹窗，见 accounts-dialog-onboarding）─── */
+
+/** 后端任务行的原始形状（`GET /api/accounts/{id}/onboarding` 的 tasks 数组元素） */
+export type OnboardingTaskRaw = {
+  key?: unknown
+  title?: unknown
+  group?: unknown
+  points?: unknown
+  done?: unknown
+}
+
+/** 弹窗里渲染用的归一形状（claiming / error 是前端运行态，后端没有） */
+export type OnboardingTask = {
+  key: string
+  title: string
+  group: string
+  points: number
+  done: boolean
+  claiming?: boolean
+  error?: string
+}
+
+/** 一个账号的任务集合（弹窗按账号分段，多账号时各段带账号名） */
+export type OnboardingGroup = { id: string; label: string; tasks: OnboardingTask[] }
+
+/** 弹窗状态：打开即携带分组快照，关闭即 null（挂在 AccountsStore.onboarding） */
+export type OnboardingDialogState = { groups: OnboardingGroup[]; claiming: boolean }
+
 /* ─── 全局桥 ─────────────────────────────────── */
 
 type ConfirmOptions = {
@@ -159,6 +187,24 @@ export type AccountsBridge = {
     succeeded?: number
     total?: number
     skipped?: number
+  } | null | undefined>
+  /** Loomy 新手任务状态（只读；与 web_shim.rs 的同名方法成对维护） */
+  getOnboardingTasks?(id: string): Promise<{
+    tasks?: OnboardingTaskRaw[]
+    earned?: unknown
+    total?: unknown
+    unclaimed?: unknown
+  } | null | undefined>
+  /** Loomy 新手任务一键领取（串行上报全部未完成 key，服务端幂等） */
+  claimOnboardingTasks?(id: string): Promise<{
+    results?: Array<Record<string, unknown>>
+    claimed?: unknown
+    failed?: unknown
+    claimedPoints?: unknown
+    tasks?: OnboardingTaskRaw[]
+    earned?: unknown
+    total?: unknown
+    unclaimed?: unknown
   } | null | undefined>
   getProxies(): Promise<{ clash?: ClashSnapshot } | null | undefined>
   /** 代理池列表（「网络代理」页维护的命名代理）：账号代理表单的

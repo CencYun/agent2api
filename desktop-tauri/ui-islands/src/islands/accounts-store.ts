@@ -20,7 +20,7 @@
  * 两条路都经过同一个订阅者集合，React 侧看不出差别。
  */
 
-import { shared, type AccountRecord, type AccountsSnapshot, type ClashSnapshot, type PanelKind } from './accounts-shared'
+import { shared, type AccountRecord, type AccountsSnapshot, type ClashSnapshot, type OnboardingDialogState, type PanelKind } from './accounts-shared'
 import {
   byPriorityOrder, filterCounts, positionMap, providerSummaries, visibleAccounts,
   type AccountFilter,
@@ -43,6 +43,8 @@ export type AccountsStore = {
    *  （存量配置专用）—— 账号页的代理下拉列的是「网络代理」页的池条目 */
   clash: ClashSnapshot | null
   dialog: AccountsDialog
+  /** Loomy 新手任务弹窗（签到后查询到未领取任务时打开，见 accounts-onboarding） */
+  onboarding: OnboardingDialogState | null
   namesHidden: boolean
   /** 批量查询余额 / 签到在途（工具条按钮的文案与禁用态） */
   usageBusy: boolean
@@ -81,6 +83,7 @@ let store: AccountsStore = {
   connections: new Map<string, number>(),
   clash: null,
   dialog: null,
+  onboarding: null,
   namesHidden: loadNamesHidden(),
   usageBusy: false,
   checkinBusy: false,

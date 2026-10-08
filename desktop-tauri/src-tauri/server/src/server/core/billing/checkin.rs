@@ -252,6 +252,16 @@ pub async fn checkin_for(
                     .map_err(|error| error.message);
             claim_result(id, name, &display, true, claim)
         }
+        "kuku" => {
+            // KukuAI：「免费领积分」活动的每日任务（每日登录 / 完成一次对话），
+            // 接口幂等（重复领 reward_point=0），见 `kuku::checkin` 的模块头。
+            // 业务会话由实现内部换发 genflowpro STOKEN（`kuku::engine`）保障。
+            let claim =
+                crate::server::core::providers::kuku::checkin::claim_daily_checkin(store, &id)
+                    .await
+                    .map_err(|error| error.message);
+            claim_result(id, name, &display, true, claim)
+        }
         // 兜底只服务默认那家（WorkBuddy）——**不是**「剩下所有家」。
         // 这里曾经是无所不包的 `_`：一个 provider 只要没在上面列出，就会拿自己的
         // 令牌去打腾讯的签到接口，稳定报错且看不出原因（Qoder 接入前正是这个处境）。

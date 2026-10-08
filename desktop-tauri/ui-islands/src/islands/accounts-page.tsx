@@ -74,6 +74,7 @@ import {
   ProviderCell, ProxyCell, StatusCell, TableHead, UsageCell,
 } from './accounts-panels'
 import { AccountsDialogs } from './accounts-dialogs'
+import { OnboardingDialog } from './accounts-dialog-onboarding'
 
 /** 列设置的句柄（注册在挂载后的布局 effect 里，见下方说明） */
 let colHandle: ColSettingsHandle | null = null
@@ -402,6 +403,7 @@ function AccountsPage() {
         />
       </section>
       <AccountsDialogs />
+      <OnboardingDialog />
     </>
   )
 }

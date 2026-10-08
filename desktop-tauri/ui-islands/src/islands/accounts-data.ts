@@ -40,6 +40,7 @@ import { clampPriority, priorityOf } from './accounts-columns'
 import {
   allAccounts, bump, findAccount, getStore, isPicked, openPanelsFor, panelOpen, patch,
 } from './accounts-store'
+import { offerOnboardingClaimFor } from './accounts-onboarding'
 
 // 状态层原样再导出：视图侧（accounts-page / panels / dialogs）只认本文件这一条路径
 export * from './accounts-store'
@@ -598,6 +599,9 @@ export async function checkinAll(): Promise<void> {
     // 签到会改变余额读数（签到发的就是积分 / 权益）：静默再查一遍，余额列直接落到
     // 新读数（不 await、不播报，理由见 refreshUsageAfterCheckin）
     void refreshUsageAfterCheckin()
+    // Loomy 账号签完顺手查一次新手任务：有未领取就弹窗自动领（一次性福利，
+    // 全领完后查询结果为空、不再弹 —— 见 accounts-onboarding 的模块头）
+    void offerOnboardingClaimFor(targets.map(account => account.id))
   } catch (error) {
     const message = errorMessage(error)
     targets.forEach(account => checkinErrors.set(account.id, message))
@@ -640,6 +644,8 @@ export async function runCheckin(id: string): Promise<void> {
     // 签到会改变余额读数：此刻刷新余额（静默，见 refreshUsageAfterCheckin）。
     // 只查这一行 —— 用户点的是这个账号，别的行没动过
     void refreshUsageAfterCheckin(id)
+    // Loomy 账号签完顺手查一次新手任务：有未领取就弹窗自动领（见 accounts-onboarding）
+    void offerOnboardingClaimFor([id])
     void shared().wbApp?.refresh?.()
   } catch (error) {
     const message = errorMessage(error)

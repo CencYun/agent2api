@@ -38,6 +38,7 @@ pub mod endpoints;
 pub mod images;
 pub mod login;
 pub mod models;
+pub mod onboarding;
 pub mod sign;
 
 use axum::http::HeaderMap;

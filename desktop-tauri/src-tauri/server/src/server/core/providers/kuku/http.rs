@@ -80,6 +80,68 @@ fn http_json(response: crate::server::core::auth_http::ApiResponse, url: &str) -
     })
 }
 
+/// 非 2xx 响应的统一翻译（与 `http_json` 同一口径；正文用于排障）。
+fn translate_status(status: u16, url: &str, head: &str) -> GatewayError {
+    if status == 401 || status == 403 {
+        GatewayError::with_status(
+            401,
+            format!("KukuAI 登录态已失效，请重新登录或重新导入该账号（HTTP {status}，{url}）"),
+        )
+    } else {
+        GatewayError::with_status(status as i32, format!("KukuAI 返回 HTTP {status}（{url}）：{head}"))
+    }
+}
+
+/// 一次表单 POST（`freepoint/taskComplete` 这类 x-www-form-urlencoded 接口），
+/// 返回已解析的 JSON。
+///
+/// 表单值由调用方给定：签到任务的 `task_type` 是 `LOGIN` / `CHAT` 这类常量，
+/// 不含需要百分号编码的字符，按 `k=v` 直接拼接（与上游客户端一致）。
+pub async fn post_form_value(
+    url: &str,
+    headers: &[(String, String)],
+    form: &[(&str, &str)],
+    proxy: Option<&ResolvedProxy>,
+    timeout_ms: Option<u64>,
+) -> Result<Value, GatewayError> {
+    let client = egress::client_for(proxy);
+    let mut builder = client
+        .post(url)
+        .header("Accept", "application/json, text/plain, */*")
+        .header(
+            "Content-Type",
+            "application/x-www-form-urlencoded;charset=UTF-8",
+        );
+    for (key, value) in headers {
+        builder = builder.header(key.as_str(), value);
+    }
+    let body = form
+        .iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>()
+        .join("&");
+    builder = builder.body(body);
+    if let Some(timeout) = timeout_ms {
+        builder = builder.timeout(std::time::Duration::from_millis(timeout));
+    }
+    let response = builder
+        .send()
+        .await
+        .map_err(|error| transport_error("KukuAI 请求", error))?;
+    let status = response.status().as_u16();
+    if !(200..300).contains(&status) {
+        let text = response.text().await.unwrap_or_default();
+        let head: String = text.chars().take(240).collect();
+        return Err(translate_status(status, url, &head));
+    }
+    let text = response.text().await.map_err(|error| {
+        GatewayError::with_status(502, format!("KukuAI 响应读取失败：{error}"))
+    })?;
+    serde_json::from_str(&text).map_err(|error| {
+        GatewayError::with_status(502, format!("KukuAI 返回非 JSON 响应（{url}）：{error}"))
+    })
+}
+
 /// 发起一次 SSE 流式 POST（对话流；**不设总超时**，长推理不被截断）。
 ///
 /// 返回原始 `reqwest::Response`（调用方遍历 `bytes_stream()`）。调用方负责
