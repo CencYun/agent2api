@@ -369,12 +369,15 @@ fn checkin_completed_today(claim: &Value) -> bool {
 ///
 /// `id` 为 None 时签全部符合条件的账号（定时签到走这条），范围由 `providers`
 /// 决定（配置里勾选的提供商，缺省全选；**指定 id 单签时不受范围限制**）。
-/// **串行**：避免多账号同时打上游触发 11128 风控。
+/// `reason` 只在批量轮次（id=None）进签到历史台账（`checkin_history`，签到中心
+/// 时间线的来源）；单账号签到不进台账，只更新账号的 `checkinAt`。
+/// **串行**：避免多账号同时打上游触发 11-128 风控。
 pub async fn run_checkin(
     store: &AccountStore,
     billing: &BillingService,
     providers: &[String],
     id: Option<&str>,
+    reason: &str,
 ) -> Result<Value, CheckinError> {
     let (targets, skipped) = resolve_checkin_targets(store, providers, id)?;
     let mut results = Vec::with_capacity(targets.len());
@@ -417,6 +420,19 @@ pub async fn run_checkin(
         "[Accounts]",
         &format!("签到完成: {succeeded}/{} 个账号成功领取", results.len()),
     );
+    // 批量轮次进台账（签到中心时间线）。写盘失败只记日志：上游那边积分已经
+    // 领到，台账缺一条不该让这次签到的响应报错。
+    if id.is_none() {
+        crate::server::core::checkin_history::record(
+            &json!({
+                "succeeded": succeeded,
+                "total": results.len(),
+                "skipped": skipped,
+                "results": results,
+            }),
+            reason,
+        );
+    }
     Ok(json!({
         "results": results,
         "succeeded": succeeded,

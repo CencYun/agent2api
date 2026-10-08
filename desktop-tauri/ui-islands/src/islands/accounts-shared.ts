@@ -124,13 +124,18 @@ export type UsageEntry = null | string | Record<string, unknown> | undefined
 export type Align = 'left' | 'center' | 'right'
 
 /**
- * 行内明细面板的 kind。**只剩「限流明细」一种**：签到曾经也有一个明细面板，
- * 已按要求删除 —— 签到的结果现在只落在行上那颗按钮（状态 + title 里的失败原因）
- * 与一条 toast 上，见 accounts-data.ts 的 `checkinErrors`。
+ * 行内明细面板的 kind。**只剩「限流明细」一种**：签到曾也有一个明细面板，
+ * 已随表格化删除；账号页的签到按钮又整体迁去了「签到中心」，行内面板
+ * 与签到从此互不相干。
  */
 export type PanelKind = 'limits'
 
-/* ─── Loomy 新手任务（签到后弹窗，见 accounts-dialog-onboarding）─── */
+/* ─── Loomy 新手任务 ─────────────────────────
+ *
+ * 类型在这里、消费在签到中心（checkin-page.tsx / checkin-state.ts）：任务状态
+ * 是上游查询，签到中心的快照刻意不带，按账号惰性查询后缓存。账号页曾有一个
+ * 「签到后自动弹窗领取」的链路（accounts-dialog-onboarding），随账号页签到
+ * 按钮一起移除 —— 签到后的自动处理由 checkin-state.ts 承接。 */
 
 /** 后端任务行的原始形状（`GET /api/accounts/{id}/onboarding` 的 tasks 数组元素） */
 export type OnboardingTaskRaw = {
@@ -141,7 +146,7 @@ export type OnboardingTaskRaw = {
   done?: unknown
 }
 
-/** 弹窗里渲染用的归一形状（claiming / error 是前端运行态，后端没有） */
+/** 渲染用的归一形状（claiming / error 是前端运行态，后端没有） */
 export type OnboardingTask = {
   key: string
   title: string
@@ -151,12 +156,6 @@ export type OnboardingTask = {
   claiming?: boolean
   error?: string
 }
-
-/** 一个账号的任务集合（弹窗按账号分段，多账号时各段带账号名） */
-export type OnboardingGroup = { id: string; label: string; tasks: OnboardingTask[] }
-
-/** 弹窗状态：打开即携带分组快照，关闭即 null（挂在 AccountsStore.onboarding） */
-export type OnboardingDialogState = { groups: OnboardingGroup[]; claiming: boolean }
 
 /* ─── 全局桥 ─────────────────────────────────── */
 
@@ -182,30 +181,6 @@ export type AccountsBridge = {
   } | null | undefined>
   getAllBalances(id?: string): Promise<{ results?: Array<Record<string, unknown>> } | null | undefined>
   getBalancesSnapshot(): Promise<{ at?: number; results?: Array<Record<string, unknown>> } | null | undefined>
-  checkinAllAccounts(id?: string | null): Promise<{
-    results?: Array<Record<string, unknown>>
-    succeeded?: number
-    total?: number
-    skipped?: number
-  } | null | undefined>
-  /** Loomy 新手任务状态（只读；与 web_shim.rs 的同名方法成对维护） */
-  getOnboardingTasks?(id: string): Promise<{
-    tasks?: OnboardingTaskRaw[]
-    earned?: unknown
-    total?: unknown
-    unclaimed?: unknown
-  } | null | undefined>
-  /** Loomy 新手任务一键领取（串行上报全部未完成 key，服务端幂等） */
-  claimOnboardingTasks?(id: string): Promise<{
-    results?: Array<Record<string, unknown>>
-    claimed?: unknown
-    failed?: unknown
-    claimedPoints?: unknown
-    tasks?: OnboardingTaskRaw[]
-    earned?: unknown
-    total?: unknown
-    unclaimed?: unknown
-  } | null | undefined>
   getProxies(): Promise<{ clash?: ClashSnapshot } | null | undefined>
   /** 代理池列表（「网络代理」页维护的命名代理）：账号代理表单的
    *  「已保存的代理」下拉读它；写侧（增删改）只有那一页用，不在这份桥里 */

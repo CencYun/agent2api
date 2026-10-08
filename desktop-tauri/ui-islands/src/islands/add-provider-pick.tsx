@@ -53,8 +53,9 @@ export function typeValueOf(value: string): AccountType {
  * 内嵌的图标（与系统里显示的为同一张；AutoClaw 国内 / 国际版、Cline 两种账号、
  * Accio / ZCode 两地各自共用一张 —— 它们本来就是同一个客户端）。
  * 自定义家与没收录图标的家回落到首字母徽章。
+ * 导出共用：签到中心的提供商行用同一份映射（checkin-page.tsx），别处不要照抄。
  */
-const PROVIDER_ICONS: Record<string, string> = {
+export const PROVIDER_ICONS: Record<string, string> = {
   workbuddy: 'assets/providers/workbuddy.png',
   raccoon: 'assets/providers/raccoon.png',
   catpaw: 'assets/providers/catpaw.png',

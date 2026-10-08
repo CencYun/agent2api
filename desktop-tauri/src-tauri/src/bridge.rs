@@ -470,6 +470,9 @@ const BRIDGE_JS: &str = r#"
     getAutoCheckin: () => call('GET', '/api/auto-checkin'),
     saveAutoCheckin: patch => call('POST', '/api/auto-checkin', patch),
     runAutoCheckinNow: () => call('POST', '/api/auto-checkin/run', {}),
+    // 签到中心的聚合快照（每日签到分组 / 自动签到设置 / 签到历史 / 一次性项入口），
+    // 见 api::checkin_center 的模块头 —— 页面打开只打这一条
+    getCheckinCenter: () => call('GET', '/api/checkin-center'),
 
     // ── 间隔型定时任务（凭证自动维护 / 定时查询积分 / 模型刷新 / 两个前端自动刷新）──
     // 改一条任务用 PATCH（后端同时受理 POST 作别名：CORS 允许方法里没有 PATCH，

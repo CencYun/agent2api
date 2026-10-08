@@ -42,6 +42,9 @@ pub mod auto_checkin;
 pub mod billing;
 pub mod captcha;
 pub mod chat;
+// 签到中心的聚合快照（GET /api/checkin-center）：分组口径在后端唯一化，
+// 资格类状态由前端按需惰性查询，见该文件模块头
+pub mod checkin_center;
 pub mod cline_headers;
 pub mod codearts_welfare;
 pub mod config_api;

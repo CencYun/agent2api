@@ -491,6 +491,11 @@ pub fn panel_router(state: ServerState) -> Router {
             get(api::auto_checkin::get_state).post(api::auto_checkin::configure),
         )
         .route("/api/auto-checkin/run", post(api::auto_checkin::run_now))
+        // ── 签到中心的聚合快照 ──
+        // 只读一条：分组与「今日已签」的判定复用批量签到同一对判据
+        // （CHECKIN_PROVIDERS ∩ supports_checkin），见 api::checkin_center 的模块头。
+        // 挂 protected：它能列出全部账号及其签到时间，敏感度与 /api/accounts 一致。
+        .route("/api/checkin-center", get(api::checkin_center::get_center))
         // ── 间隔型定时任务（凭证自动维护 / 模型目录刷新 / 两个前端自动刷新）──
         // 挂 protected：它能改后端后台任务的执行节奏（间隔 1 分钟会让网关持续
         // 打上游），并触发真打上游的刷新，敏感度与 /api/retention 同级。

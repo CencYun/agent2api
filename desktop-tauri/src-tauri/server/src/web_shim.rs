@@ -815,6 +815,8 @@ pub fn shim_js() -> &'static str {
     getAutoCheckin: function () { return call('GET', '/api/auto-checkin'); },
     saveAutoCheckin: function (patch) { return call('POST', '/api/auto-checkin', patch); },
     runAutoCheckinNow: function () { return call('POST', '/api/auto-checkin/run', {}); },
+    // 签到中心的聚合快照（与 bridge.rs 的同名方法同一路径）
+    getCheckinCenter: function () { return call('GET', '/api/checkin-center'); },
 
     // ── 间隔型定时任务 ──
     getScheduledTasks: function () { return call('GET', '/api/scheduled-tasks'); },

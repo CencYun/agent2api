@@ -123,12 +123,13 @@ function applyZoom(percent) {
 // ─── 页面导航 ────────────────────────────────
 
 const PAGE_KEY = 'workbuddy-desktop-page';
-const PAGES = ['overview', 'accounts', 'gateway', 'proxies', 'keys', 'docs', 'logs', 'tasks', 'requests', 'settings'];
+const PAGES = ['overview', 'accounts', 'checkin', 'gateway', 'proxies', 'keys', 'docs', 'logs', 'tasks', 'requests', 'settings'];
 /** 页签中文名：顶栏面包屑用。overview 的用户可见名是「报表」、gateway 的是「模型管理」
  *  （内部标识保持不变：localStorage 记忆、showPage 与 CSS 的 [data-page] 选择器都依赖它） */
 const PAGE_LABELS = {
   overview: '报表',
   accounts: '账号',
+  checkin: '签到中心',
   gateway: '模型管理',
   proxies: '网络代理',
   keys: '网关 Key',
@@ -176,6 +177,10 @@ function showPage(name, { persist = true } = {}) {
   // 定时任务页自持清单与编辑态，切进去时拉一次最新
   if (page === 'tasks') {
     window.wbTasksPanel?.load?.();
+  }
+  // 签到中心自持数据（聚合快照 + 惰性查询缓存），切进去时拉一次最新
+  if (page === 'checkin') {
+    void window.wbCheckinPanel?.load?.();
   }
   // 切到设置页时拉一次启动设置与网关地址（面板内部自持状态，这里只做转发）
   if (page === 'settings') {
@@ -260,6 +265,8 @@ function renderTopbarStatus() {
     requests: () => mirror('req-badge'),
     // 定时任务页的徽标由 tasks-panel 自己渲染（「N / M 个已开启」），直接镜像
     tasks: () => mirror('tasks-badge'),
+    // 签到中心的徽标由 checkin-page 自己渲染（自动签到开启状态），直接镜像
+    checkin: () => mirror('checkin-badge'),
     settings: () => (gatewayUp ? chip('网关运行中', 'ok', true) : chip('未就绪', 'bad', true))
       + (enabled ? chip(`${enabled} 个账号启用`) : ''),
     overview: () => (gatewayUp ? chip('网关运行中', 'ok') : chip('未就绪', 'bad'))
@@ -688,7 +695,7 @@ async function refresh() {
   }
 }
 
-// ─── 账号操作（列表按钮统一入口；积分/签到由 accounts-view 自行消化） ───
+// ─── 账号操作（列表按钮统一入口；余额查询由账号视图自行消化） ───
 
 async function runAccountAction(action, id) {
   if (busy) return;

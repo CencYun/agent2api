@@ -31,8 +31,6 @@ export const RACCOON_PROVIDER_ID = 'raccoon'
 type ProviderFeatures = {
   /** 这一家有没有余额 / 积分查询概念 */
   usage: boolean
-  /** 这一家有没有签到活动 */
-  checkin: boolean
   /** 有没有国内 / 国际版概念（决定提供商徽章是否拼版本后缀、有效期读哪个字段） */
   edition: boolean
   /** 账号标识落在记录里的哪个键（uid / userId / account） */
@@ -74,8 +72,12 @@ type ProviderFeatures = {
  * provider 能力表：决定行上出现哪些按钮、哪行明细显示什么。
  *
  * 为什么是「按 provider 查表」而不是在渲染处写 if：账号页的每个分支（余额按钮、
- * 签到按钮、版本后缀、标识字段名）都要问同一个问题 ——「这家有没有这个概念」。
+ * 版本后缀、标识字段名）都要问同一个问题 ——「这家有没有这个概念」。
  * 散在各处写 if 的话，加一家就要翻一遍全文件，漏掉一处不报错、只静默少一个按钮。
+ *
+ * （签到**不在**这张表里：账号页已无签到按钮，签到中心的分组与可签判定在
+ * 后端 —— `core::auto_checkin` 的 CHECKIN_PROVIDERS 与 `billing::checkin::
+ * supports_checkin` 是唯一口径，各家的签到链路事实也记在那边的模块头里。）
  *
  * usage 各家都是 true（余额查询已扩到全部提供商），各由自己的适配器实现；前端只回答
  * 「这一家有没有这个概念」。CatPaw 的余额接口要单独配一个网页会话凭证（token2），
@@ -83,33 +85,27 @@ type ProviderFeatures = {
  * 用户才有「去配置」的入口。
  */
 const PROVIDER_FEATURES: Record<string, ProviderFeatures> = {
-  workbuddy: { usage: true, checkin: true, edition: true, identifier: 'uid', expiry: 'expiresAt' },
+  workbuddy: { usage: true, edition: true, identifier: 'uid', expiry: 'expiresAt' },
   // WorkBuddy 国际版（拆家后的第二家，见 providers::workbuddy::region）：
-  //   · `checkin: false` 是事实 —— 腾讯的每日签到只有国内站有（拆家前靠
-  //     `edition !== 'intl'` 排除，现在由 provider 身份表达，那层排除随之多余）；
-  //   · `edition: false` 是因为注册名「WorkBuddy 国际版」自带地区，再拼一次会
-  //     得到「WorkBuddy 国际版 国际版」（`editionSuffix` 虽有「名字已含就不拼」
-  //     的兜底，这里直接写 false 更清楚，与 `zcode-intl` 同款）。
-  'workbuddy-intl': { usage: true, checkin: false, edition: false, identifier: 'uid', expiry: 'expiresAt' },
-  raccoon: { usage: true, checkin: true, edition: false, identifier: 'userId', expiry: 'tokenExpiresAt' },
-  catpaw: { usage: true, checkin: false, edition: false, identifier: 'uid', expiry: 'tokenExpiresAt' },
+  //   `edition: false` 是因为注册名「WorkBuddy 国际版」自带地区，再拼一次会
+  //   得到「WorkBuddy 国际版 国际版」（`editionSuffix` 虽有「名字已含就不拼」
+  //   的兜底，这里直接写 false 更清楚，与 `zcode-intl` 同款）。
+  'workbuddy-intl': { usage: true, edition: false, identifier: 'uid', expiry: 'expiresAt' },
+  raccoon: { usage: true, edition: false, identifier: 'userId', expiry: 'tokenExpiresAt' },
+  catpaw: { usage: true, edition: false, identifier: 'uid', expiry: 'tokenExpiresAt' },
   // AutoClaw 两个地区能力完全一致，差别只在域名；两项都必须登记 —— 漏了哪一项，
   // 那一家就会掉进 GENERIC_FEATURES（症状：余额按钮消失、标识列显示成空）
-  autoclaw: { usage: true, checkin: true, edition: false, identifier: 'userId', expiry: 'tokenExpiresAt' },
-  'autoclaw-intl': { usage: true, checkin: true, edition: false, identifier: 'userId', expiry: 'tokenExpiresAt', emailAsName: true },
-  // Qoder 的签到**只有中国版有**（国际版这个地区没有签到计划，见 providers::qoder::checkin）。
-  // 能力位照样写 true —— 国际版账号由 supportsCheckin 的第二道判据（edition !== 'intl'，
-  // Qoder 的公开形态带该字段）单独排除，明细面板给出「国际版暂无签到活动」的说明；
-  // 中国版里没有被下发活动的账号（Free 套餐实测如此）会在点签到后得到一条中性提示。
-  qoder: { usage: true, checkin: true, edition: true, identifier: 'userId', expiry: 'expiresAt', emailAsName: true },
+  autoclaw: { usage: true, edition: false, identifier: 'userId', expiry: 'tokenExpiresAt' },
+  'autoclaw-intl': { usage: true, edition: false, identifier: 'userId', expiry: 'tokenExpiresAt', emailAsName: true },
+  qoder: { usage: true, edition: true, identifier: 'userId', expiry: 'expiresAt', emailAsName: true },
   // Cline 两条键：同一家上游按计费通道拆成两个 provider，账号形态完全一样（见
   // providers::cline::models）。查表按 id 精确匹配，只登记一个会让另一家掉进兜底
-  'cline-free': { usage: true, checkin: false, edition: false, identifier: 'account', expiry: 'expiresAt' },
-  'cline-pass': { usage: true, checkin: false, edition: false, identifier: 'account', expiry: 'expiresAt' },
-  // Accio 两个地区：额度可查（上游只给用量百分比）、没有签到、有地区概念
-  accio: { usage: true, checkin: false, edition: true, identifier: 'userId', expiry: 'expiresAt', emailAsName: true },
-  'accio-cn': { usage: true, checkin: false, edition: true, identifier: 'userId', expiry: 'expiresAt', emailAsName: true },
-  // ZCode 两个地区：**没有签到**，替代它的是「限时套餐领取」（claim 位）。
+  'cline-free': { usage: true, edition: false, identifier: 'account', expiry: 'expiresAt' },
+  'cline-pass': { usage: true, edition: false, identifier: 'account', expiry: 'expiresAt' },
+  // Accio 两个地区：额度可查（上游只给用量百分比）、有地区概念
+  accio: { usage: true, edition: true, identifier: 'userId', expiry: 'expiresAt', emailAsName: true },
+  'accio-cn': { usage: true, edition: true, identifier: 'userId', expiry: 'expiresAt', emailAsName: true },
+  // ZCode 两个地区：本家的运营动作是「限时套餐领取」（claim 位）。
   // `usage: true` 对应 providers::zcode::balance —— 余额读的是 billing 网关的
   //   `/zcode-plan/billing/balance`，认**套餐 JWT**（与转发用的 accessToken 不是
   //   一套凭证）。账号只粘了 accessToken 时后端回可识别的「未配置」，余额列显示成
@@ -118,19 +114,19 @@ const PROVIDER_FEATURES: Record<string, ProviderFeatures> = {
   //   **每天一份新套餐**（plan_id 带日期段），领过之后按钮当天显示「今日已领」、
   //   次日自动恢复 —— 见 `claimedToday`。
   // expiry 取 expiresAt 是给 add_zcode_account 的契约（落账号时要写访问令牌的过期时间）
-  zcode: { usage: true, checkin: false, claim: true, planChannel: true, edition: true, identifier: 'userId', expiry: 'expiresAt' },
-  'zcode-intl': { usage: true, checkin: false, claim: true, planChannel: true, edition: true, identifier: 'userId', expiry: 'expiresAt' },
+  zcode: { usage: true, claim: true, planChannel: true, edition: true, identifier: 'userId', expiry: 'expiresAt' },
+  'zcode-intl': { usage: true, claim: true, planChannel: true, edition: true, identifier: 'userId', expiry: 'expiresAt' },
   // CodeArts（华为云 AI 代码助手）。各位各有出处，别照着别家抄：
   // `usage: true` —— 余额是**两份账**（订阅统计 + 福利网关，见 providers::codearts::balance），
   //   界面上「读到 0」与「没读到」必须能分开，后端因此把失败的一侧写进 statisticsError /
   //   benefitError 而不是整次失败（半次失败的呈现见 accounts-panels 的 usageSummary）。
-  // `welfare: true` —— 本家没有「每日签到」，对应物是 ops 福利领取（探测 → 确认 →
-  //   领取 → 回读二次确认），是用户点一下才走的独立按钮。
+  // `welfare: true` —— 本家的运营动作是 ops 福利领取（探测 → 确认 → 领取 → 回读
+  //   二次确认），是用户点一下才走的独立按钮。
   // `edition: false` —— 没有版本/地区概念：region 固定在 cn-north-4 且必须与 token
   //   签发地一致，不是用户可选项；`login_type`（WEB/IDE）也不是版本，别塞进这一列。
   // `expiry: 'expiresAt'` —— 临时凭据约一小时到期，这一列对本家**是主要信息**。
   codearts: {
-    usage: true, checkin: false, welfare: true, edition: false,
+    usage: true, welfare: true, edition: false,
     identifier: 'userId', expiry: 'expiresAt',
     concurrencyDefault: 3,
   },
@@ -138,40 +134,31 @@ const PROVIDER_FEATURES: Record<string, ProviderFeatures> = {
   // 而不是一个地区的两种拼法，国际版将来接入时另立 provider id，不把它做成账号字段。
   // `usage: true` 对应 providers::trae::usage（上游两份账：ide_user_ent_usage 的权益包/
   // 积分池 + ide_user_pay_status 的快请求与 SOLO 并发）。
-  // `checkin: false` 同样不是省事：签到那条链在参考实现里有把出口 IP 打进封禁的前科，
-  // 且它记的「签到钱包」与模型调用真正扣的积分池是两笔钱 —— 不给按钮，免得给一个
-  // 点了必然报错（或报出一个对不上官方数字的余额）的入口。
-  trae: { usage: true, checkin: false, edition: false, identifier: 'uid', expiry: 'expiresAt' },
-  // Loomy（讯飞）。三位各有出处：
+  trae: { usage: true, edition: false, identifier: 'uid', expiry: 'expiresAt' },
+  // Loomy（讯飞）。各位各有出处：
   // `usage: true` 对应 providers::loomy::balance —— 余额是**双账户**（永久积分 +
   //   每日赠送积分，读 `GET /api/v2/points/records` 的摘要字段），界面上两张卡都列。
-  // `checkin: true` —— 本家**没有**独立签到接口，但「每日赠送积分」由每日首次登录
-  //   自动刷新（`POST /api/v1/points/first-login`），已接进自动签到框架
-  //   （见 providers::loomy::checkin 的模块头）。勾选框里的签到对它就是这个调用。
   // `edition: false` —— 单一入口（手机验证码登录），没有国际版/地区概念。
   // `expiry: 'expiresAt'` —— 落账号时按登录时刻 + 14 天估算（上游没有续期接口，
   //   过期只能重新登录；这一列对它是「什么时候该重登」的提示）。
-  loomy: { usage: true, checkin: true, edition: false, identifier: 'userId', expiry: 'expiresAt' },
-  // KukuAI（百度文库库库 AI）。四位各有出处：
+  loomy: { usage: true, edition: false, identifier: 'userId', expiry: 'expiresAt' },
+  // KukuAI（百度文库库库 AI）。各位各有出处：
   // `usage: true` —— 余额/积分查询（GET /bizapi/gfpro/getgfvipremain 的
   //   totalPoint，见后端 providers::kuku::balance）。
-  // `checkin: true` —— 「免费领积分」活动的每日任务（freepoint 的 LOGIN/CHAT，
-  //   接口幂等，见后端 providers::kuku::checkin）—— 2026-10-08 已接入，
-  //   自动签到与单账号签到按钮都走它。
   // `edition: false` —— 单一入口（粘贴 Cookie / 导入本机登录态 / 网页登录），
   //   没有国际版。
   // `identifier: 'uid'` —— 账号标识存 uid（userreport 的 uk）。
   // `expiry: ''` —— BDUSS 没有过期时间字段（无刷新接口，过期只能重登，
   //   这一列对它是空，界面不渲染「有效期」）。
-  kuku: { usage: true, checkin: true, edition: false, identifier: 'uid', expiry: '' },
+  kuku: { usage: true, edition: false, identifier: 'uid', expiry: '' },
 }
 
 /**
- * 未登记 provider 的兜底能力：不显示余额 / 签到 / 版本 —— 这三个都是 provider 私有
+ * 未登记 provider 的兜底能力：不显示余额 / 版本 —— 这两个都是 provider 私有
  * 概念，未知的家不该被假定拥有。标识字段假定成 userId，取不到时明细行自动少一项。
  */
 const GENERIC_FEATURES: ProviderFeatures = {
-  usage: false, checkin: false, edition: false, identifier: 'userId', expiry: 'tokenExpiresAt',
+  usage: false, edition: false, identifier: 'userId', expiry: 'tokenExpiresAt',
   emailAsName: false,
 }
 
@@ -418,22 +405,6 @@ export function accountEdition(account: AccountRecord | null | undefined): 'cn' 
 }
 
 /**
- * 该账号是否参与签到：所属家**有签到活动**，且不是国际版。
- *
- * 版本限定对 WorkBuddy 与 Qoder 两家实际生效 —— 它们的签到活动只在国内站
- * （Qoder 国际版这个地区根本没有签到计划）。判断按「非 intl」写而不是逐个
- * provider 特判：另几家没有 edition 字段，accountEdition 会把缺省值归一成 cn，
- * 因此这个条件对它们是恒真的。
- *
- * 与后端同源同口径：`billing::checkin::supports_checkin` 也是这条判据，
- * 两处任一改动都要同时改（批量签到的目标集合由后端算，前端这处只决定按钮）。
- */
-export function supportsCheckin(account: AccountRecord | null | undefined): boolean {
-  if (!providerFeatures(providerOf(account)).checkin) return false
-  return accountEdition(account) !== 'intl'
-}
-
-/**
  * 这个账号能不能「领取体验套餐」（ZCode 独有的动作）。两道判据缺一不可：
  *   ① 能力位（claim）—— 只有 ZCode 那两家登记了它；
  *   ② `canClaim` —— 后端公开形态给的字段，表示这个账号确实带着套餐令牌（jwt）。
@@ -595,44 +566,6 @@ export function welfareTodoTitle(state: WelfareState): string {
     ? `今天（北京时间 ${state.day}）已试过 ${state.attempts} 次但官方尚未确认到账，`
     : ''
   return `${tried}探测并领取官方每日登录赠送的套餐积分（到账进套餐积分，不增加福利模型 token 池）`
-}
-
-/**
- * 某时刻所在**本地自然日**的零点。自然日的判定统一走这里，与限流恢复时间的
- * 「今天 / 明天」（formatResetText）同一口径。
- */
-const startOfLocalDay = (value: number): number => {
-  const date = new Date(value)
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
-}
-
-/**
- * 该账号**今天是否已签到**（后端落盘的 `checkinAt` 落在本地今天）。
- *
- * 签到按自然日幂等（上游按天重置额度），所以「签过没有」不能只看有没有这个时间戳，
- * 必须比自然日 —— 过了 0 点同一个字段自然失效，**不需要任何定时器去重置**：判定是
- * 每次渲染现算的，跨零点后下一次重绘按钮就自己变回可点。
- * 看的是后端字段而不是界面缓存：自动签到的执行者是后端（定时任务），界面缓存里
- * 根本没有那次签到的结果。
- */
-export function checkedInToday(account: AccountRecord | null | undefined): boolean {
-  const at = Number(account?.checkinAt) || 0
-  if (at <= 0) return false
-  // 时间戳比现在还晚（改过系统时钟、或手工编辑过账号文件）时仍按「今天」算：
-  // 它只可能来自一次真实的签到，宁可显示已签到也不要让按钮一直亮着
-  if (at > Date.now()) return true
-  return startOfLocalDay(at) === startOfLocalDay(Date.now())
-}
-
-/**
- * 可参与签到的账号（一键签到只用这批：所属家有签到活动 + 非国际版）。
- *
- * **不看 `enabled`**：禁用只表示「别用它转发」，签到是另一件事 —— 一个被禁用的账号
- * 依然可以每天签到攒积分。此处与后端 `core::billing::checkin` 的批量路径过滤链
- * 口径一致，否则界面上的「将签到 N 个账号」会与实际执行数对不上。
- */
-export function checkinableAccounts(list: AccountRecord[] | null | undefined): AccountRecord[] {
-  return (list || []).filter(account => supportsCheckin(account))
 }
 
 /* ─── 筛选维度（provider / enabled / limit 三维各自独立）───── */
@@ -839,33 +772,6 @@ export function accountTags(account: AccountRecord): AccountTag[] {
       }
       : null,
   ].filter((tag): tag is AccountTag => tag !== null)
-}
-
-/**
- * 「下次什么时候能再签」的说明（已签到按钮的悬停说明与明细面板共用一句）。
- *
- * 两家口径不同：
- *   - WorkBuddy / 小浣熊 / AutoClaw：按**自然日**重置，明天 0 点后可再签；
- *   - Qoder：每日权益是一个**活动窗口**（当天 10:00 → 次日 10:00），
- *     所以 0 点后不一定能签 —— 说「0 点后可再签」会让人白点一次。
- */
-export function checkinResetHint(account: AccountRecord | null | undefined): string {
-  return providerOf(account) === 'qoder'
-    ? 'Qoder 的每日权益按 10:00 → 次日 10:00 的活动窗口发放，新窗口开放后可再领'
-    : '签到按自然日重置，明天 0 点后可再签'
-}
-
-/** 「已签到」按钮的悬停说明：给出签到时刻与重置时机，回答「为什么点不动、什么时候能再签」 */
-export function checkinDoneTitle(account: AccountRecord | null | undefined): string {
-  const at = Number(account?.checkinAt) || 0
-  const clock = at > 0 ? `今天 ${new Date(at).toTimeString().slice(0, 5)}` : '今天'
-  return `${clock} 已签到；${checkinResetHint(account)}`
-}
-
-/** 签到明细里「今天已签到」那一刻的时钟串（0 返回空串） */
-export function checkinClock(account: AccountRecord | null | undefined): string {
-  const at = Number(account?.checkinAt) || 0
-  return at > 0 ? new Date(at).toTimeString().slice(0, 5) : ''
 }
 
 /** 更新时刻文案（时间戳非法时返回空串，调用处据此省略那半句） */

@@ -1025,8 +1025,17 @@ pub async fn accounts_checkin(state: &ServerState, body: &Bytes) -> Response {
     // 批量路径的提供商范围取自动签到的同一份配置（两处入口一个口径）；
     // 指定 id 的单签不受范围限制（见 resolve_checkin_targets 的说明）
     let providers = state.auto_checkin().configured_providers();
-    match checkin::run_checkin(state.store(), state.billing(), providers.as_slice(), id.as_deref())
-        .await
+    // reason 进签到历史台账（仅批量轮次记账，见 checkin_history 的说明）：
+    // 账号页「全部签到」与签到中心的批量动作都从这条路由走，与定时触发的
+    // 「到点触发 / 启动补签」在时间线上区分开。
+    match checkin::run_checkin(
+        state.store(),
+        state.billing(),
+        providers.as_slice(),
+        id.as_deref(),
+        "手动签到",
+    )
+    .await
     {
         Ok(result) => ok_json(result),
         Err(error) => management_error(error.status_code, error.message),
