@@ -117,6 +117,15 @@ pub fn panel_router(state: ServerState) -> Router {
             "/api/session/login/raccoon-callback",
             get(api::session::login_raccoon_callback),
         )
+        // KukuAI 短信登录收尾（百度通行证）：壳侧在登录窗口跳转 success.html
+        // 后读取 WebView2 Cookie 存储（BDUSS 是 HttpOnly，页面脚本读不到），
+        // 把 state + 登录态 Cookie 一并 POST 交到这里。**免鉴权**：调用方是
+        // 壳侧进程（登录窗口），不带 API Key；安全性由登录任务的一次性 state
+        // 承担（与 raccoon-callback 同款）。
+        .route(
+            "/api/session/login/kuku/complete",
+            post(api::session::login_kuku_complete),
+        )
         // AutoClaw OAuth（国际版）的 loopback 回调：**浏览器 302 到这里**
         // （授权页完成后顶层导航到我们交给上游的 navigate_uri，见
         // `providers::autoclaw::oauth`），所以同样必须免鉴权 —— 调用方是用户的

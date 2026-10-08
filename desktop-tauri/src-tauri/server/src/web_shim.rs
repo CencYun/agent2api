@@ -465,8 +465,8 @@ pub fn shim_js() -> &'static str {
     },
     port_occupant: function () { return Promise.resolve(null); },
     get_app_settings: function () {
-      // 桌面设置（关窗到托盘 / 开机自启）在网页端没有宿主，固定默认值
-      return Promise.resolve({ closeToTray: false, autostart: false, proxyPort: 0 });
+      // 桌面设置（关窗到托盘 / 开机自启 / 轻量模式）在网页端没有宿主，固定默认值
+      return Promise.resolve({ closeToTray: false, autostart: false, proxyPort: 0, lightweightMode: false });
     },
     open_release_page: function (args) {
       if (args && args.url) { try { window.open(args.url, '_blank'); } catch (e) { /* 无害 */ } }
@@ -993,7 +993,7 @@ pub fn shim_js() -> &'static str {
     getAppSettings: function () { return invokeShell('get_app_settings'); },
     saveAppSettings: function (patch) {
       // 无处持久化也不该报错：界面保存成功即可（本次会话内忽略）
-      return Promise.resolve(Object.assign({ closeToTray: false, autostart: false, proxyPort: 0 }, patch));
+      return Promise.resolve(Object.assign({ closeToTray: false, autostart: false, proxyPort: 0, lightweightMode: false }, patch));
     },
     exportAccounts: function () { return invokeShell('export_accounts'); },
     importAccounts: function () { return invokeShell('import_accounts'); },

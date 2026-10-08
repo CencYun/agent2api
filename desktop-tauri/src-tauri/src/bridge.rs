@@ -237,6 +237,10 @@ const BRIDGE_JS: &str = r#"
     pushZcodeCaptchaTokens: tokens =>
       call('POST', '/api/zcode/captcha', { tokens: Array.isArray(tokens) ? tokens : [] }),
     onLoginState: callback => on('login:state', callback),
+    // KukuAI 短信登录的窗口进度（壳侧监视任务推送，见 `start_kuku_sms`）：
+    // {status: 'opening'|'filling'|'sending'|'sent'|'captcha'|'timeout'}。
+    // 面板提示行据此实时显示，用户不会「点了没反应」。
+    onKukuSmsStatus: callback => on('login:kuku-status', callback),
     refreshSession: async () => {
       await call('POST', '/api/session/refresh', {});
       return call('GET', '/api/session');
@@ -415,6 +419,14 @@ const BRIDGE_JS: &str = r#"
       // Loomy 是**另一条链路**（自己的签名算法与站点，中间态叫 msgid 而不是
       // deviceId），端点在服务端就是分开挂的；其余（AutoClaw 两地区）沿用既有
       // 端点，`provider` 原样带上去由后端判地区。
+      //
+      // KukuAI 又是**第三条链**：百度通行证没有可直连的发码 API（发码要页面上
+      // 的风控签名，见 `login::kuku_sms_script`），所以发码由**壳开登录窗口替用户
+      // 点**——走壳命令 `login_kuku_sms_send`（返回 {state}），verify 时才真正
+      // 登录。走 invoke 而不是 call：这条命令操作的是壳侧 WebView 窗口。
+      if (provider === 'kuku') {
+        return invoke('login_kuku_sms_send', { phone });
+      }
       const path = provider === 'loomy'
         ? '/api/session/login/loomy/sms/send'
         : '/api/session/login/sms/send';
@@ -425,6 +437,12 @@ const BRIDGE_JS: &str = r#"
     },
     verifySmsLogin: payload => {
       const provider = (payload && payload.provider) ? String(payload.provider) : '';
+      // KukuAI：验证码由壳写入登录窗口（`login_kuku_sms_verify`），
+      // 完成后返回 {account, list}（与添加账号的响应同形状，见
+      // `login::submit_kuku_sms_code`）。
+      if (provider === 'kuku') {
+        return invoke('login_kuku_sms_verify', { code: String((payload && payload.code) || '') });
+      }
       const path = provider === 'loomy'
         ? '/api/session/login/loomy/sms/verify'
         : '/api/session/login/sms/verify';

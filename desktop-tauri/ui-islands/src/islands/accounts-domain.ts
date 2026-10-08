@@ -152,6 +152,16 @@ const PROVIDER_FEATURES: Record<string, ProviderFeatures> = {
   // `expiry: 'expiresAt'` —— 落账号时按登录时刻 + 14 天估算（上游没有续期接口，
   //   过期只能重新登录；这一列对它是「什么时候该重登」的提示）。
   loomy: { usage: true, checkin: true, edition: false, identifier: 'userId', expiry: 'expiresAt' },
+  // KukuAI（百度文库库库 AI）。三位各有出处：
+  // `usage: true` —— 余额/积分查询（GET /bizapi/gfpro/getgfvipremain 的
+  //   totalPoint，见后端 providers::kuku::balance）。
+  // `checkin: false` —— 上游有可自动化的每日积分任务（freepoint LOGIN/CHAT，
+  //   参考实现做过），但本家第一版没接自动签到，按钮给了也是必败入口。
+  // `edition: false` —— 单一入口（粘贴 Cookie / 导入本机登录态），没有国际版。
+  // `identifier: 'uid'` —— 账号标识存 uid（userreport 的 uk）。
+  // `expiry: ''` —— BDUSS 没有过期时间字段（无刷新接口，过期只能重登，
+  //   这一列对它是空，界面不渲染「有效期」）。
+  kuku: { usage: true, checkin: false, edition: false, identifier: 'uid', expiry: '' },
 }
 
 /**

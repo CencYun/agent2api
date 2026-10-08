@@ -73,6 +73,9 @@ const PROVIDER_ICONS: Record<string, string> = {
   // （`build/icons/favicon-228.png`，与系统里显示的应用图标为同一张；
   // 绿色圆底上的品牌形象）
   loomy: 'assets/providers/loomy.png',
+  // KukuAI：取自客户端 `GenFlowPro.exe` 的 RT_ICON 资源（256×256 那张，
+  // 与系统里显示的应用图标为同一张）
+  kuku: 'assets/providers/kuku.png',
 }
 
 type CardItem = {

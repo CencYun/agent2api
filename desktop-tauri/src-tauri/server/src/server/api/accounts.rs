@@ -586,6 +586,46 @@ pub async fn add_account(state: &ServerState, body: &Bytes) -> Response {
             }
             store.add_loomy_account(&payload, import_name)
         }
+        // KukuAI（百度文库库库 AI）：**粘贴 Cookie**（Cookie 头 / Cookie 编辑器
+        // JSON / `{BDUSS, STOKEN}` 对象）→ 解析并向上游验证（userreport 换
+        // 会话三件套 + uk）→ 落账号。
+        //
+        // `importDesktop: true` → 读本机客户端登录态（`%APPDATA%\baidugenflowpro\
+        // Network\Cookies`，明文 SQLite 无需解密，见 `kuku::credentials` 模块头）
+        // → 同样验证 → 落账号。
+        //
+        // 验证失败（凭证无效 / 客户端占用 Cookies 文件）→ 400，不落空记录。
+        Some(crate::server::core::providers::ProviderKind::Kuku) => {
+            let parsed = if import_desktop {
+                match crate::server::core::providers::kuku::credentials::read_desktop_credentials()
+                {
+                    Ok(credentials) => credentials,
+                    Err(reason) => return management_error(400, reason),
+                }
+            } else {
+                match crate::server::core::providers::kuku::credentials::credentials_from_payload(
+                    &payload,
+                ) {
+                    Ok(credentials) => credentials,
+                    Err(reason) => return management_error(400, reason),
+                }
+            };
+            let verified = match crate::server::core::providers::kuku::credentials::enrich_identity(
+                &parsed,
+                None,
+                true,
+            )
+            .await
+            {
+                Ok(credentials) => credentials,
+                Err(error) => return management_error(error.status_code, error.message),
+            };
+            store.add_kuku_account(
+                &verified,
+                import_name,
+                if import_desktop { "desktop" } else { "manual" },
+            )
+        }
         // WorkBuddy 系的两家（国内版 / 国际版）：同一套凭证形态与落账号路径，
         // 差别只有归属 —— provider id 自己就是归属（拆家后不再从 payload 里的
         // `edition` 反推：那是账号的属性，而落哪一家是身份问题）。

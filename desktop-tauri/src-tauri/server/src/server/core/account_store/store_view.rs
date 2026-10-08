@@ -273,6 +273,11 @@ impl AccountStore {
             // Loomy（讯飞）：单一入口（手机验证码登录），公开形态带 userId /
             // phone / session 尾四位的展示字段（见 `loomy_accounts.rs`）
             self.to_loomy_public_account(record)
+        } else if record.provider() == super::kuku_accounts::KUKU_PROVIDER_ID {
+            // KukuAI（百度文库库库 AI）：单一入口（粘贴 Cookie / 导入本机登录态），
+            // 公开形态带 uid(=uk) / loginName(=昵称) / tokenTail（见
+            // `kuku_accounts.rs`）
+            self.to_kuku_public_account(record)
         } else if record
             .provider()
             .starts_with(crate::server::core::custom_providers::ID_PREFIX)
